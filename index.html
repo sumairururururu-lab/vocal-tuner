@@ -43,6 +43,10 @@
   .meter .labels { position: absolute; bottom: -4px; left: 0; right: 0; display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
   .verdict { font-size: 13px; font-weight: 700; color: var(--dim); min-height: 20px; margin-top: 6px; }
 
+  .graph-panel { width: 100%; background: var(--panel); border: 1px solid #232a35; border-radius: 16px; padding: 10px 10px 8px; margin-bottom: 10px; }
+  #graph { width: 100%; height: 170px; display: block; border-radius: 10px; background: #10141b; }
+  .glegend { font-size: 11px; color: #5b6b80; text-align: center; margin-top: 6px; line-height: 1.6; }
+
   .targets { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 10px 0 2px; }
   .chip {
     background: #232a35; color: var(--text); border: 2px solid transparent;
@@ -104,6 +108,11 @@
         <div class="verdict" id="verdict"></div>
         <div class="targets" id="chips"></div>
         <div id="targetDiff"></div>
+      </div>
+
+      <div class="graph-panel">
+        <canvas id="graph"></canvas>
+        <div class="glegend">線 = 声の軌跡。横線に乗ってればその音。🟢±15¢ 🟡±40¢ 🔴以上 ／ 青破線 = 目標音</div>
       </div>
 
       <div class="rec-panel">
@@ -416,6 +425,72 @@ recBtn.onclick = () => { recording ? stopRecording() : startRecording(); };
 // ================= tuner loop =================
 let analyser = null, anBuf = null;
 
+// ================= pitch graph =================
+const graph = $("graph"), gctx = graph.getContext("2d");
+let gSamples = [];
+let viewLo = 60, viewHi = 84;
+const GRAPH_WIN = 12;
+function pushSample(nowSec, midi) {
+  gSamples.push({ t: nowSec, m: midi });
+  const cut = nowSec - GRAPH_WIN - 0.5;
+  while (gSamples.length && gSamples[0].t < cut) gSamples.shift();
+}
+const BLACK_KEYS = new Set([1,3,6,8,10]);
+function drawGraph(nowSec) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = graph.clientWidth, h = graph.clientHeight;
+  if (graph.width !== Math.round(w * dpr)) { graph.width = Math.round(w * dpr); graph.height = Math.round(h * dpr); }
+  gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  gctx.fillStyle = "#10141b"; gctx.fillRect(0, 0, w, h);
+  let lo = null, hi = null;
+  for (const s of gSamples) {
+    if (s.m === null) continue;
+    if (lo === null || s.m < lo) lo = s.m;
+    if (hi === null || s.m > hi) hi = s.m;
+  }
+  if (lo !== null) {
+    lo -= 1.4; hi += 1.4;
+    if (targetMidi !== null) { lo = Math.min(lo, targetMidi - 1.2); hi = Math.max(hi, targetMidi + 1.2); }
+    if (hi - lo < 6) { const c = (hi + lo) / 2; lo = c - 3; hi = c + 3; }
+    lo = Math.max(45, lo); hi = Math.min(98, hi);
+    viewLo += (lo - viewLo) * 0.05; viewHi += (hi - viewHi) * 0.05;
+  }
+  const yOf = m => h - (m - viewLo) / (viewHi - viewLo) * h;
+  const t0 = nowSec - GRAPH_WIN;
+  const xOf = t => (t - t0) / GRAPH_WIN * w;
+  for (let m = Math.floor(viewLo) - 1; m <= Math.ceil(viewHi) + 1; m++) {
+    gctx.fillStyle = BLACK_KEYS.has(((m % 12) + 12) % 12) ? "#131720" : "#1b212c";
+    gctx.fillRect(0, yOf(m + 0.5), w, yOf(m - 0.5) - yOf(m + 0.5));
+    gctx.strokeStyle = "#252d3a"; gctx.lineWidth = 1;
+    gctx.beginPath(); gctx.moveTo(0, yOf(m)); gctx.lineTo(w, yOf(m)); gctx.stroke();
+    const nn = ((m % 12) + 12) % 12;
+    if (nn === 0 || nn === 5) { gctx.fillStyle = "#46536a"; gctx.font = "10px sans-serif"; gctx.fillText(noteName(m), 3, yOf(m) - 2); }
+  }
+  if (targetMidi !== null) {
+    const y = yOf(targetMidi);
+    gctx.strokeStyle = "#4a90ff"; gctx.setLineDash([6, 5]); gctx.lineWidth = 1.6;
+    gctx.beginPath(); gctx.moveTo(0, y); gctx.lineTo(w, y); gctx.stroke(); gctx.setLineDash([]);
+    gctx.fillStyle = "#4a90ff"; gctx.font = "bold 11px sans-serif";
+    const lbl = "目標 " + noteName(Math.round(targetMidi));
+    gctx.fillText(lbl, w - gctx.measureText(lbl).width - 6, y - 5);
+  }
+  gctx.lineCap = "round"; gctx.lineJoin = "round";
+  let prev = null;
+  for (const s of gSamples) {
+    if (s.t < t0 || s.m === null) { prev = null; continue; }
+    if (prev !== null && s.t - prev.t < 0.3) {
+      const cents = (s.m - Math.round(s.m)) * 100;
+      gctx.strokeStyle = Math.abs(cents) <= 15 ? "#3ddc84" : Math.abs(cents) <= 40 ? "#ffd166" : "#ff6b6b";
+      gctx.lineWidth = 2.6;
+      gctx.beginPath(); gctx.moveTo(xOf(prev.t), yOf(prev.m)); gctx.lineTo(xOf(s.t), yOf(s.m)); gctx.stroke();
+    }
+    prev = s;
+  }
+  if (prev !== null && prev.t > nowSec - 0.3) {
+    gctx.fillStyle = "#fff"; gctx.beginPath(); gctx.arc(xOf(prev.t), yOf(prev.m), 3.5, 0, Math.PI * 2); gctx.fill();
+  }
+}
+
 function loop() {
   if (analyser) {
     analyser.getFloatTimeDomainData(anBuf);
@@ -450,6 +525,7 @@ function loop() {
         targetDiffEl.textContent = `差 ${d > 0 ? "+" : ""}${d.toFixed(1)} 半音`;
         targetDiffEl.style.color = Math.abs(d) < 0.25 ? "var(--ok)" : Math.abs(d) < 1 ? "var(--near)" : "var(--far)";
       } else targetDiffEl.textContent = "";
+      pushSample(now / 1000, smoothMidi);
     } else {
       smoothMidi = null;
       noteEl.textContent = "–"; noteEl.style.color = "var(--dim)";
@@ -460,8 +536,10 @@ function loop() {
         pitchLog.push([tSec, null, null, 0]);
         lastLogT = now;
       }
+      pushSample(now / 1000, null);
     }
   }
+  drawGraph(performance.now() / 1000);
   requestAnimationFrame(loop);
 }
 

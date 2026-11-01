@@ -17,51 +17,40 @@
     min-height: 100vh; padding: 16px; user-select: none;
   }
   h1 { font-size: 15px; font-weight: 600; color: var(--dim); margin-bottom: 12px; letter-spacing: .04em; }
-
   .start-btn {
     background: #2563eb; color: #fff; border: none; border-radius: 14px;
     font-size: 18px; font-weight: 700; padding: 16px 28px; cursor: pointer;
     box-shadow: 0 4px 20px rgba(37,99,235,.4);
   }
-  .start-btn:active { transform: scale(.97); }
-
   #main { display: none; flex-direction: column; align-items: center; width: 100%; max-width: 480px; }
-
   .note-panel {
     width: 100%; background: var(--panel); border-radius: 20px;
-    padding: 22px 16px 14px; text-align: center; margin-bottom: 12px;
-    border: 1px solid #232a35;
+    padding: 20px 16px 12px; text-align: center; margin-bottom: 12px; border: 1px solid #232a35;
   }
   #note {
-    font-size: clamp(64px, 22vw, 104px); font-weight: 800; line-height: 1.05;
-    font-variant-numeric: tabular-nums; letter-spacing: .02em;
-    color: var(--dim); transition: color .15s;
+    font-size: clamp(60px, 20vw, 96px); font-weight: 800; line-height: 1.05;
+    font-variant-numeric: tabular-nums; color: var(--dim); transition: color .15s;
   }
   #centsText { font-size: 18px; font-weight: 700; color: var(--dim); margin-top: 2px; min-height: 26px; }
   #hz { font-size: 14px; color: var(--dim); margin-top: 4px; font-variant-numeric: tabular-nums; }
-
   .meter { position: relative; width: 100%; height: 56px; margin: 14px 0 4px; }
-  .meter .track {
-    position: absolute; top: 26px; left: 0; right: 0; height: 6px;
-    background: #2a3342; border-radius: 3px;
-  }
-  .meter .center {
-    position: absolute; top: 18px; left: 50%; width: 2px; height: 22px;
-    background: #5b6b80; transform: translateX(-50%);
-  }
-  .meter .zone-ok {
-    position: absolute; top: 26px; left: 50%; width: 40px; height: 6px;
-    background: var(--ok); opacity: .35; transform: translateX(-50%); border-radius: 3px;
-  }
+  .meter .track { position: absolute; top: 26px; left: 0; right: 0; height: 6px; background: #2a3342; border-radius: 3px; }
+  .meter .center { position: absolute; top: 18px; left: 50%; width: 2px; height: 22px; background: #5b6b80; transform: translateX(-50%); }
+  .meter .zone-ok { position: absolute; top: 26px; left: 50%; width: 40px; height: 6px; background: var(--ok); opacity: .35; transform: translateX(-50%); border-radius: 3px; }
   #needle {
     position: absolute; top: 8px; left: 50%; width: 14px; height: 14px;
     background: #fff; border-radius: 50%; transform: translateX(-50%);
-    box-shadow: 0 0 10px rgba(255,255,255,.5); transition: left .08s linear;
-    opacity: 0;
+    box-shadow: 0 0 10px rgba(255,255,255,.5); transition: left .08s linear; opacity: 0;
   }
   .meter .labels { position: absolute; bottom: -2px; left: 0; right: 0; display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); padding: 0 2px; }
-
   .verdict { font-size: 15px; font-weight: 700; min-height: 24px; color: var(--dim); margin-top: 8px; }
+
+  .graph-panel {
+    width: 100%; background: var(--panel); border: 1px solid #232a35;
+    border-radius: 16px; padding: 10px 10px 8px; margin-bottom: 12px;
+  }
+  #graph { width: 100%; height: 190px; display: block; border-radius: 10px; background: #10141b; }
+  .glegend { font-size: 11px; color: #5b6b80; text-align: center; margin-top: 6px; line-height: 1.6; }
 
   .target-panel {
     width: 100%; background: var(--panel); border-radius: 16px; padding: 12px 14px;
@@ -78,23 +67,9 @@
   }
   .chip.active { border-color: #2563eb; background: #1c2c4e; }
   .chip.play { background: #143326; color: var(--ok); }
-  .chip.note-chip { font-size: 13px; padding: 7px 12px; }
   #targetInfo { font-size: 13px; color: var(--dim); margin-top: 10px; display: none; }
   #targetInfo b { color: var(--text); }
-
-  .history { width: 100%; background: var(--panel); border-radius: 16px; padding: 12px 14px; border: 1px solid #232a35; }
-  .history .head { font-size: 13px; font-weight: 700; color: var(--dim); margin-bottom: 8px; display: flex; justify-content: space-between; }
-  .history .head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; }
-  #hist { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; }
-  .pill {
-    font-size: 12px; font-weight: 700; padding: 5px 9px; border-radius: 8px;
-    background: #232a35; font-variant-numeric: tabular-nums;
-  }
-  .pill.ok { background: #143326; color: var(--ok); }
-  .pill.near { background: #3a3320; color: var(--near); }
-  .pill.far { background: #3a2020; color: var(--far); }
-
-  .hint { font-size: 12px; color: var(--dim); text-align: center; margin-top: 14px; line-height: 1.7; padding: 0 8px; }
+  .hint { font-size: 12px; color: var(--dim); text-align: center; margin-top: 6px; line-height: 1.7; padding: 0 8px; }
   #err { color: var(--far); font-size: 14px; margin-top: 10px; text-align: center; display: none; }
 </style>
 </head>
@@ -118,6 +93,14 @@
       <div class="verdict" id="verdict"></div>
     </div>
 
+    <div class="graph-panel">
+      <canvas id="graph"></canvas>
+      <div class="glegend">
+        線 = あなたの声の軌跡（左が古い）。横線に乗ってればその音。<br>
+        🟢 ±15¢ ・ 🟡 ±40¢ ・ 🔴 それ以上　／　青の破線 = 目標音
+      </div>
+    </div>
+
     <div class="target-panel">
       <div class="head">
         <span>🎯 目標音モード（ピン留めして差を見られる）</span>
@@ -127,78 +110,51 @@
       <div id="targetInfo"></div>
     </div>
 
-    <div class="history">
-      <div class="head"><span>📝 出た音の履歴（合ってた順に色が変わる）</span><button id="clearHist">クリア</button></div>
-      <div id="hist"></div>
-    </div>
-
     <div class="hint">
-      🟢 −15〜+15セント = 「合ってる」ゾーン<br>
-      テキトーに歌わずに、ひとつの音を長く伸ばして見るのが一番わかりやすいです
+      グラフの見方：目標の破線の上に線を乗せる練習。<br>
+      山の途中で下に逃げたら「低め」、上はみ出したら「高め」が一目でわかります。
     </div>
   </div>
 
 <script>
 "use strict";
 
-// ---------- YIN pitch detection ----------
 function detectPitch(buf, sampleRate) {
   const W = 1024;
   const tauMin = Math.max(2, Math.floor(sampleRate / 1100));
   const tauMax = Math.min(buf.length - W - 1, Math.floor(sampleRate / 65));
   if (tauMax <= tauMin) return null;
-
-  // RMS gate — silence check
   let energy = 0;
   for (let i = 0; i < buf.length; i++) energy += buf[i] * buf[i];
   if (Math.sqrt(energy / buf.length) < 0.012) return null;
-
   const d = new Float32Array(tauMax + 1);
   for (let tau = tauMin; tau <= tauMax; tau++) {
     let sum = 0;
-    for (let j = 0; j < W; j++) {
-      const diff = buf[j] - buf[j + tau];
-      sum += diff * diff;
-    }
+    for (let j = 0; j < W; j++) { const diff = buf[j] - buf[j + tau]; sum += diff * diff; }
     d[tau] = sum;
   }
-
-  // cumulative mean normalized difference
   const dPrime = new Float32Array(tauMax + 1);
-  let cum = 0;
-  dPrime[0] = 1;
-  for (let tau = 1; tau <= tauMax; tau++) {
-    cum += d[tau];
-    dPrime[tau] = cum > 0 ? d[tau] * tau / cum : 1;
-  }
-
-  // absolute threshold
+  let cum = 0; dPrime[0] = 1;
+  for (let tau = 1; tau <= tauMax; tau++) { cum += d[tau]; dPrime[tau] = cum > 0 ? d[tau] * tau / cum : 1; }
   const TH = 0.14;
   let tauEst = -1;
   for (let tau = tauMin; tau <= tauMax; tau++) {
     if (dPrime[tau] < TH) {
       while (tau + 1 <= tauMax && dPrime[tau + 1] < dPrime[tau]) tau++;
-      tauEst = tau;
-      break;
+      tauEst = tau; break;
     }
   }
   if (tauEst < 0) {
-    // fallback: global minimum
     let best = Infinity;
-    for (let tau = tauMin; tau <= tauMax; tau++) {
-      if (dPrime[tau] < best) { best = dPrime[tau]; tauEst = tau; }
-    }
+    for (let tau = tauMin; tau <= tauMax; tau++) if (dPrime[tau] < best) { best = dPrime[tau]; tauEst = tau; }
     if (best > 0.45) return null;
   }
-
-  // parabolic interpolation
   let betterTau = tauEst;
   if (tauEst > tauMin && tauEst < tauMax) {
     const s0 = dPrime[tauEst - 1], s1 = dPrime[tauEst], s2 = dPrime[tauEst + 1];
     const denom = 2 * (2 * s1 - s2 - s0);
     if (Math.abs(denom) > 1e-12) betterTau = tauEst + (s2 - s0) / denom;
   }
-
   const f0 = sampleRate / betterTau;
   if (f0 < 65 || f0 > 1250) return null;
   const clarity = 1 - dPrime[tauEst];
@@ -206,28 +162,115 @@ function detectPitch(buf, sampleRate) {
   return { f0, clarity };
 }
 
-// ---------- note helpers ----------
 const NOTE_NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
 function midiOf(f) { return 69 + 12 * Math.log2(f / 440); }
-function noteName(midi) {
-  const m = Math.round(midi);
-  return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
-}
+function noteName(m) { return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
 function nearestNote(f) {
-  const midi = midiOf(f);
-  const m = Math.round(midi);
-  const cents = Math.round((midi - m) * 100);
-  return { midi: m, name: NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1), cents };
+  const midi = midiOf(f), m = Math.round(midi);
+  return { midi: m, name: noteName(m), cents: Math.round((midi - m) * 100) };
 }
+function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
-// ---------- UI refs ----------
 const $ = id => document.getElementById(id);
 const noteEl = $("note"), centsEl = $("centsText"), hzEl = $("hz"),
-      needle = $("needle"), verdictEl = $("verdict"),
-      targetDiffEl = $("targetDiff"), targetInfo = $("targetInfo"),
-      histEl = $("hist"), chipsEl = $("chips");
+      needle = $("needle"), verdictEl = $("verdict"), targetDiffEl = $("targetDiff"),
+      chipsEl = $("chips"), targetInfo = $("targetInfo");
 
-// ---------- targets (Postscript) ----------
+// ================= pitch graph =================
+const graph = $("graph"), gctx = graph.getContext("2d");
+let samples = [];        // {t: sec, m: midi|null}
+let viewLo = 60, viewHi = 84;
+const GRAPH_WIN = 12;    // seconds visible
+
+function pushSample(nowSec, midi) {
+  samples.push({ t: nowSec, m: midi });
+  const cut = nowSec - GRAPH_WIN - 0.5;
+  while (samples.length && samples[0].t < cut) samples.shift();
+}
+const BLACK_KEYS = new Set([1,3,6,8,10]); // C#=1, D#=3, F#=6, G#=8, A#=10
+
+function drawGraph(nowSec) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = graph.clientWidth, h = graph.clientHeight;
+  if (graph.width !== Math.round(w * dpr)) { graph.width = Math.round(w * dpr); graph.height = Math.round(h * dpr); }
+  gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  gctx.fillStyle = "#10141b";
+  gctx.fillRect(0, 0, w, h);
+
+  // --- view range (smoothed, auto-fit) ---
+  let lo = null, hi = null;
+  for (const s of samples) {
+    if (s.m === null) continue;
+    if (lo === null || s.m < lo) lo = s.m;
+    if (hi === null || s.m > hi) hi = s.m;
+  }
+  if (lo !== null) {
+    lo -= 1.4; hi += 1.4;
+    if (targetMidi !== null) { lo = Math.min(lo, targetMidi - 1.2); hi = Math.max(hi, targetMidi + 1.2); }
+    if (hi - lo < 6) { const c = (hi + lo) / 2; lo = c - 3; hi = c + 3; }
+    lo = Math.max(45, lo); hi = Math.min(98, hi);
+    viewLo += (lo - viewLo) * 0.05;
+    viewHi += (hi - viewHi) * 0.05;
+  }
+  const yOf = m => h - (m - viewLo) / (viewHi - viewLo) * h;
+  const t0 = nowSec - GRAPH_WIN;
+  const xOf = t => (t - t0) / GRAPH_WIN * w;
+
+  // --- semitone rows (piano style) ---
+  const startRow = Math.floor(viewLo) - 1, endRow = Math.ceil(viewHi) + 1;
+  for (let m = startRow; m <= endRow; m++) {
+    const yTop = yOf(m + 0.5), yBot = yOf(m - 0.5);
+    gctx.fillStyle = BLACK_KEYS.has(((m % 12) + 12) % 12) ? "#131720" : "#1b212c";
+    gctx.fillRect(0, yTop, w, yBot - yTop);
+    gctx.strokeStyle = "#252d3a"; gctx.lineWidth = 1;
+    gctx.beginPath(); gctx.moveTo(0, yOf(m)); gctx.lineTo(w, yOf(m)); gctx.stroke();
+    const nn = ((m % 12) + 12) % 12;
+    if (nn === 0 || nn === 5) { // C and F labels for orientation
+      gctx.fillStyle = "#46536a";
+      gctx.font = "10px sans-serif";
+      gctx.fillText(noteName(m), 3, yOf(m) - 2);
+    }
+  }
+
+  // --- target line ---
+  if (targetMidi !== null) {
+    const y = yOf(targetMidi);
+    gctx.strokeStyle = "#4a90ff"; gctx.setLineDash([6, 5]); gctx.lineWidth = 1.6;
+    gctx.beginPath(); gctx.moveTo(0, y); gctx.lineTo(w, y); gctx.stroke();
+    gctx.setLineDash([]);
+    gctx.fillStyle = "#4a90ff"; gctx.font = "bold 11px sans-serif";
+    const lbl = "目標 " + noteName(Math.round(targetMidi));
+    gctx.fillText(lbl, w - gctx.measureText(lbl).width - 6, y - 5);
+  }
+
+  // --- trace ---
+  gctx.lineCap = "round"; gctx.lineJoin = "round";
+  let prev = null;
+  for (const s of samples) {
+    if (s.t < t0) { prev = null; continue; }
+    if (s.m === null) { prev = null; continue; }
+    if (prev !== null && s.t - prev.t < 0.3) {
+      const cents = (s.m - Math.round(s.m)) * 100;
+      const col = Math.abs(cents) <= 15 ? "#3ddc84" : Math.abs(cents) <= 40 ? "#ffd166" : "#ff6b6b";
+      gctx.strokeStyle = col; gctx.lineWidth = 2.6;
+      gctx.beginPath();
+      gctx.moveTo(xOf(prev.t), yOf(prev.m));
+      gctx.lineTo(xOf(s.t), yOf(s.m));
+      gctx.stroke();
+    }
+    prev = s;
+  }
+
+  // --- head dot ---
+  if (prev !== null && prev.t > nowSec - 0.3) {
+    gctx.fillStyle = "#fff";
+    gctx.beginPath();
+    gctx.arc(xOf(prev.t), yOf(prev.m), 3.5, 0, Math.PI * 2);
+    gctx.fill();
+  }
+}
+
+// ================= targets =================
 const PRESETS = [
   { label: "F♯4", midi: 66, info: "Aメロの中心" },
   { label: "D♯5", midi: 75, info: "サビの中心" },
@@ -243,13 +286,15 @@ function renderChips() {
   chipsEl.innerHTML = "";
   PRESETS.forEach(p => {
     const b = document.createElement("button");
-    b.className = "chip note-chip" + (targetLabel === p.label ? " active" : "");
+    b.className = "chip" + (targetLabel === p.label ? " active" : "");
     b.textContent = p.label;
     b.onclick = () => {
-      if (targetLabel === p.label) { targetMidi = null; targetLabel = null; }
-      else { targetMidi = p.midi; targetLabel = p.label; }
-      targetInfo.style.display = targetMidi !== null ? "block" : "none";
-      if (targetMidi !== null) targetInfo.innerHTML = `<b>${p.label}</b> — ${p.info}`;
+      if (targetLabel === p.label) { targetMidi = null; targetLabel = null; targetInfo.style.display = "none"; }
+      else {
+        targetMidi = p.midi; targetLabel = p.label;
+        targetInfo.style.display = "block";
+        targetInfo.innerHTML = "<b>" + p.label + "</b> — " + p.info;
+      }
       renderChips();
     };
     chipsEl.appendChild(b);
@@ -260,7 +305,6 @@ function renderChips() {
   play.onclick = () => { if (targetMidi !== null) playTone(midiFreq(targetMidi)); };
   chipsEl.appendChild(play);
 }
-function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 let audioCtx = null;
 function playTone(freq, dur = 1.6) {
@@ -275,111 +319,67 @@ function playTone(freq, dur = 1.6) {
   o.start(); o.stop(audioCtx.currentTime + dur + 0.05);
 }
 
-// ---------- smoothing & history ----------
-let smoothMidi = null, lastCommit = 0, lastCommitMidi = -1, lastNoteTime = 0;
+// ================= main loop =================
+let smoothMidi = null, analyser = null, anBuf = null;
 
-function pushHistory(name, cents) {
-  const cls = Math.abs(cents) <= 15 ? "ok" : Math.abs(cents) <= 40 ? "near" : "far";
-  const sign = cents > 0 ? "♯" : cents < 0 ? "♭" : "";
-  const pill = document.createElement("span");
-  pill.className = "pill " + cls;
-  pill.textContent = name + " " + sign + Math.abs(cents);
-  histEl.prepend(pill);
-  while (histEl.children.length > 16) histEl.lastChild.remove();
-}
-
-function update(targetMidi) {
-  const note = noteEl.textContent;
-  const c = parseFloat(centsEl.dataset.c || "999");
-  // history: commit when stable for ~1.2s
-  const now = performance.now();
-  if (note !== "–" && Math.abs(c) <= 60) {
-    const m = parseFloat(noteEl.dataset.m);
-    if (m === lastCommitMidi && now - lastCommit > 1200) {
-      // already logged
-    } else if (m !== lastCommitMidi) {
-      if (now - lastNoteTime > 700 && lastCommitMidi !== -1) {
-        // switched note — commit nothing, just track
+function loop() {
+  const nowSec = performance.now() / 1000;
+  if (analyser) {
+    analyser.getFloatTimeDomainData(anBuf);
+    const det = detectPitch(anBuf, audioCtx.sampleRate);
+    if (det) {
+      const midi = midiOf(det.f0);
+      if (smoothMidi === null) smoothMidi = midi;
+      else {
+        const diff = midi - smoothMidi;
+        smoothMidi += (Math.abs(diff) > 6 ? Math.sign(diff) * 6 : diff * 0.35);
       }
-      lastCommitMidi = m;
-      lastCommit = now;
-      pushHistory(note, Math.round(c));
-      lastNoteTime = now;
+      const nn = nearestNote(midiFreq(smoothMidi));
+      noteEl.textContent = nn.name;
+      const color = Math.abs(nn.cents) <= 15 ? "var(--ok)" : Math.abs(nn.cents) <= 40 ? "var(--near)" : "var(--far)";
+      noteEl.style.color = color;
+      const centsText = nn.cents === 0 ? "✔ 合ってる！" : (nn.cents > 0 ? "♯" + nn.cents + " セント 高い" : "♭" + Math.abs(nn.cents) + " セント 低い");
+      centsEl.textContent = centsText;
+      centsEl.style.color = color;
+      hzEl.textContent = det.f0.toFixed(1) + " Hz";
+      needle.style.left = (50 + Math.max(-50, Math.min(50, nn.cents))) + "%";
+      needle.style.opacity = 1;
+      verdictEl.textContent = Math.abs(nn.cents) <= 15 ? "🟢 合ってる！その調子" : Math.abs(nn.cents) <= 40 ? "🟡 あと少し" : (nn.cents > 0 ? "🔴 高すぎる → もう少し低めに" : "🔴 低すぎる → もう少し高めに");
+      if (targetMidi !== null) {
+        const d = smoothMidi - targetMidi;
+        targetDiffEl.textContent = "差 " + (d > 0 ? "+" : "") + d.toFixed(1) + " 半音";
+        targetDiffEl.style.color = Math.abs(d) < 0.25 ? "var(--ok)" : Math.abs(d) < 1 ? "var(--near)" : "var(--far)";
+      } else targetDiffEl.textContent = "";
+      pushSample(nowSec, smoothMidi);
+    } else {
+      smoothMidi = null;
+      noteEl.textContent = "–"; noteEl.style.color = "var(--dim)";
+      centsEl.textContent = "歌ってみて"; centsEl.style.color = "var(--dim)";
+      hzEl.textContent = ""; needle.style.opacity = 0; verdictEl.textContent = ""; targetDiffEl.textContent = "";
+      pushSample(nowSec, null);
     }
   }
+  drawGraph(nowSec);
+  requestAnimationFrame(loop);
 }
 
-$("clearHist").onclick = () => histEl.innerHTML = "";
-
-// ---------- main loop ----------
-let rafId = null;
-function start() {
+$("startBtn").onclick = () => {
   navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
     .then(stream => {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
+      analyser = audioCtx.createAnalyser();
       analyser.fftSize = 4096;
       src.connect(analyser);
-      const buf = new Float32Array(analyser.fftSize);
+      anBuf = new Float32Array(analyser.fftSize);
       $("startBtn").style.display = "none";
       $("main").style.display = "flex";
-
-      function loop() {
-        analyser.getFloatTimeDomainData(buf);
-        const det = detectPitch(buf, audioCtx.sampleRate);
-        if (det) {
-          const midi = midiOf(det.f0);
-          if (smoothMidi === null) smoothMidi = midi;
-          else {
-            let diff = midi - smoothMidi;
-            if (diff > 6) smoothMidi += 6; else if (diff < -6) smoothMidi -= 6;
-            else smoothMidi += diff * 0.35;
-          }
-          const nn = nearestNote(Math.pow(2, (smoothMidi - 69) / 12) * 440);
-          noteEl.textContent = nn.name;
-          noteEl.dataset.m = nn.midi;
-          const color = Math.abs(nn.cents) <= 15 ? "var(--ok)" : Math.abs(nn.cents) <= 40 ? "var(--near)" : "var(--far)";
-          noteEl.style.color = color;
-          const centsText = nn.cents === 0 ? "✔ 合ってる！" : (nn.cents > 0 ? `♯${nn.cents} セント 高い` : `♭${Math.abs(nn.cents)} セント 低い`);
-          centsEl.textContent = centsText;
-          centsEl.dataset.c = nn.cents;
-          centsEl.style.color = color;
-          hzEl.textContent = det.f0.toFixed(1) + " Hz";
-          const pos = 50 + Math.max(-50, Math.min(50, nn.cents));
-          needle.style.left = pos + "%";
-          needle.style.opacity = 1;
-
-          if (Math.abs(nn.cents) <= 15) verdictEl.textContent = "🟢 合ってる！その調子";
-          else if (Math.abs(nn.cents) <= 40) verdictEl.textContent = "🟡 あと少し";
-          else verdictEl.textContent = nn.cents > 0 ? "🔴 高すぎる → もう少し低めに" : "🔴 低すぎる → もう少し高めに";
-
-          if (targetMidi !== null) {
-            const d = smoothMidi - targetMidi;
-            const dCents = Math.round(d * 100);
-            targetDiffEl.textContent = `差 ${d > 0 ? "+" : ""}${d.toFixed(1)} 半音（${dCents > 0 ? "+" : ""}${dCents}¢）`;
-            targetDiffEl.style.color = Math.abs(d) < 0.25 ? "var(--ok)" : Math.abs(d) < 1 ? "var(--near)" : "var(--far)";
-          }
-        } else {
-          smoothMidi = null;
-          noteEl.textContent = "–";
-          noteEl.style.color = "var(--dim)";
-          centsEl.textContent = "歌ってみて";
-          centsEl.dataset.c = 999;
-          hzEl.textContent = "";
-          needle.style.opacity = 0;
-          verdictEl.textContent = "";
-          targetDiffEl.textContent = "";
-        }
-        update(targetMidi);
-        rafId = requestAnimationFrame(loop);
-      }
+      renderChips();
       loop();
     })
     .catch(err => {
       $("err").style.display = "block";
-      const inIframe = window.self !== window.top;
-      if (inIframe) {
+      if (window.self !== window.top) {
         $("err").innerHTML = "埋め込み画面ではマイクがブロックされてます。<br>新しいタブで開き直せば動きます。<br><br><button id=\"reopenBtn\" style=\"background:#2563eb;color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;padding:12px 20px;cursor:pointer;\">↗ 新しいタブで開く</button>";
         const rb = $("reopenBtn");
         if (rb) rb.onclick = () => window.open(window.location.href, "_blank");
@@ -388,10 +388,7 @@ function start() {
       }
       console.error(err);
     });
-}
-
-$("startBtn").onclick = start;
-renderChips();
+};
 </script>
 </body>
 </html>
