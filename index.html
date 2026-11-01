@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ボーカル・レコーダー &amp; チューナー</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171c24; --text: #e8eef7;
+    --dim: #8a97a8; --ok: #3ddc84; --near: #ffd166; --far: #ff6b6b; --blue: #2563eb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 14px 12px 40px; user-select: none;
+  }
+  h1 { font-size: 15px; font-weight: 700; color: var(--dim); margin-bottom: 10px; letter-spacing: .04em; }
+  .wrap { width: 100%; max-width: 480px; }
+
+  .start-btn {
+    background: var(--blue); color: #fff; border: none; border-radius: 14px;
+    font-size: 17px; font-weight: 700; padding: 15px 26px; cursor: pointer;
+    box-shadow: 0 4px 20px rgba(37,99,235,.4); width: 100%;
+  }
+  #err { color: var(--far); font-size: 13px; margin-top: 10px; text-align: center; display: none; line-height: 1.7; }
+
+  #main { display: none; }
+
+  .tuner-panel {
+    background: var(--panel); border: 1px solid #232a35; border-radius: 18px;
+    padding: 14px 14px 10px; text-align: center; margin-bottom: 10px;
+  }
+  #note { font-size: clamp(48px, 16vw, 72px); font-weight: 800; line-height: 1.05; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #centsText { font-size: 15px; font-weight: 700; color: var(--dim); min-height: 22px; }
+  #hz { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .meter { position: relative; height: 44px; margin: 8px 0 2px; }
+  .meter .track { position: absolute; top: 20px; left: 0; right: 0; height: 6px; background: #2a3342; border-radius: 3px; }
+  .meter .zone-ok { position: absolute; top: 20px; left: 50%; width: 36px; height: 6px; background: var(--ok); opacity: .35; transform: translateX(-50%); border-radius: 3px; }
+  .meter .center { position: absolute; top: 13px; left: 50%; width: 2px; height: 20px; background: #5b6b80; transform: translateX(-50%); }
+  #needle { position: absolute; top: 5px; left: 50%; width: 14px; height: 14px; background: #fff; border-radius: 50%; transform: translateX(-50%); box-shadow: 0 0 10px rgba(255,255,255,.5); opacity: 0; transition: left .07s linear; }
+  .meter .labels { position: absolute; bottom: -4px; left: 0; right: 0; display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+  .verdict { font-size: 13px; font-weight: 700; color: var(--dim); min-height: 20px; margin-top: 6px; }
+
+  .targets { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 10px 0 2px; }
+  .chip {
+    background: #232a35; color: var(--text); border: 2px solid transparent;
+    border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer;
+    font-variant-numeric: tabular-nums;
+  }
+  .chip.active { border-color: var(--blue); background: #1c2c4e; }
+  .chip.play { background: #143326; color: var(--ok); }
+  #targetDiff { font-size: 13px; font-weight: 800; color: var(--dim); margin-top: 6px; min-height: 18px; }
+
+  .rec-panel { background: var(--panel); border: 1px solid #232a35; border-radius: 18px; padding: 16px; text-align: center; margin-bottom: 10px; }
+  .rec-row { display: flex; align-items: center; justify-content: center; gap: 18px; }
+  #recBtn {
+    width: 76px; height: 76px; border-radius: 50%; border: 4px solid #3a4658;
+    background: #232a35; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  #recBtn .inner { width: 30px; height: 30px; border-radius: 50%; background: var(--far); transition: all .15s; }
+  #recBtn.recording { border-color: var(--far); }
+  #recBtn.recording .inner { border-radius: 6px; width: 26px; height: 26px; }
+  #timer { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 90px; }
+  .fmt { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+  .fmt label { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 4px; cursor: pointer; }
+
+  .list-panel { background: var(--panel); border: 1px solid #232a35; border-radius: 18px; padding: 12px 14px; }
+  .list-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .list-head span { font-size: 13px; font-weight: 700; color: var(--dim); }
+  .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; }
+  .empty { font-size: 13px; color: #5b6b80; text-align: center; padding: 12px 0; }
+  .item { border-top: 1px solid #232a35; padding: 10px 0; }
+  .item .title { font-size: 13px; font-weight: 700; margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
+  .item .sum { font-size: 11px; color: var(--dim); margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  .item audio { width: 100%; height: 34px; margin-bottom: 6px; }
+  .item .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .item .btns button, .item .btns a {
+    background: #232a35; color: var(--text); border: none; border-radius: 8px;
+    font-size: 12px; font-weight: 700; padding: 7px 11px; cursor: pointer; text-decoration: none;
+  }
+  .item .btns .del { color: var(--far); }
+  .hint { font-size: 11px; color: #5b6b80; text-align: center; margin-top: 14px; line-height: 1.8; }
+</style>
+</head>
+<body>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー</h1>
+  <div class="wrap">
+    <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
+    <div id="err"></div>
+
+    <div id="main">
+      <div class="tuner-panel">
+        <div id="note">–</div>
+        <div id="centsText">歌ってみて（録音前でも動きます）</div>
+        <div id="hz"></div>
+        <div class="meter">
+          <div class="track"></div><div class="zone-ok"></div><div class="center"></div>
+          <div id="needle"></div>
+          <div class="labels"><span>♭50</span><span>0</span><span>♯50</span></div>
+        </div>
+        <div class="verdict" id="verdict"></div>
+        <div class="targets" id="chips"></div>
+        <div id="targetDiff"></div>
+      </div>
+
+      <div class="rec-panel">
+        <div class="rec-row">
+          <button id="recBtn"><div class="inner"></div></button>
+          <div id="timer">0:00.0</div>
+        </div>
+        <div class="fmt">
+          <label><input type="radio" name="fmt" value="auto" checked> 自動（圧縮・推奨）</label>
+          <label><input type="radio" name="fmt" value="wav"> WAV（無圧縮）</label>
+        </div>
+      </div>
+
+      <div class="list-panel">
+        <div class="list-head"><span id="cnt">録音一覧 0</span><button id="clearAll">すべて削除</button></div>
+        <div id="list"><div class="empty">丸いボタンで録音すると、ここに一覧が表示されます。<br>各録音には音程ログが自動で付きます。</div></div>
+      </div>
+
+      <div class="hint">
+        🟢 中央のゾーン = 合ってる（±15セント）<br>
+        録音すると音程ログ（JSON）も保存されます → 「音程ログ」ボタンでDLして分析にどうぞ<br>
+        ブラウザを閉じると消えるので、残したい録音は「音声」をダウンロードしてね
+      </div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+
+// ================= YIN pitch detection =================
+function detectPitch(buf, sampleRate) {
+  const W = 1024;
+  const tauMin = Math.max(2, Math.floor(sampleRate / 1100));
+  const tauMax = Math.min(buf.length - W - 1, Math.floor(sampleRate / 65));
+  if (tauMax <= tauMin) return null;
+  let energy = 0;
+  for (let i = 0; i < buf.length; i++) energy += buf[i] * buf[i];
+  if (Math.sqrt(energy / buf.length) < 0.012) return null;
+  const d = new Float32Array(tauMax + 1);
+  for (let tau = tauMin; tau <= tauMax; tau++) {
+    let sum = 0;
+    for (let j = 0; j < W; j++) { const diff = buf[j] - buf[j + tau]; sum += diff * diff; }
+    d[tau] = sum;
+  }
+  const dPrime = new Float32Array(tauMax + 1);
+  let cum = 0; dPrime[0] = 1;
+  for (let tau = 1; tau <= tauMax; tau++) { cum += d[tau]; dPrime[tau] = cum > 0 ? d[tau] * tau / cum : 1; }
+  const TH = 0.14;
+  let tauEst = -1;
+  for (let tau = tauMin; tau <= tauMax; tau++) {
+    if (dPrime[tau] < TH) {
+      while (tau + 1 <= tauMax && dPrime[tau + 1] < dPrime[tau]) tau++;
+      tauEst = tau; break;
+    }
+  }
+  if (tauEst < 0) {
+    let best = Infinity;
+    for (let tau = tauMin; tau <= tauMax; tau++) if (dPrime[tau] < best) { best = dPrime[tau]; tauEst = tau; }
+    if (best > 0.45) return null;
+  }
+  let betterTau = tauEst;
+  if (tauEst > tauMin && tauEst < tauMax) {
+    const s0 = dPrime[tauEst - 1], s1 = dPrime[tauEst], s2 = dPrime[tauEst + 1];
+    const denom = 2 * (2 * s1 - s2 - s0);
+    if (Math.abs(denom) > 1e-12) betterTau = tauEst + (s2 - s0) / denom;
+  }
+  const f0 = sampleRate / betterTau;
+  if (f0 < 65 || f0 > 1250) return null;
+  const clarity = 1 - dPrime[tauEst];
+  if (clarity < 0.55) return null;
+  return { f0, clarity };
+}
+
+const NOTE_NAMES = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+function midiOf(f) { return 69 + 12 * Math.log2(f / 440); }
+function noteName(m) { return NOTE_NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1); }
+function nearestNote(f) {
+  const midi = midiOf(f), m = Math.round(midi);
+  return { midi: m, name: noteName(m), cents: Math.round((midi - m) * 100) };
+}
+function midiFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+const $ = id => document.getElementById(id);
+const noteEl = $("note"), centsEl = $("centsText"), hzEl = $("hz"),
+      needle = $("needle"), verdictEl = $("verdict"), targetDiffEl = $("targetDiff"),
+      chipsEl = $("chips"), recBtn = $("recBtn"), timerEl = $("timer"),
+      listEl = $("list"), cntEl = $("cnt"), errEl = $("err");
+
+// ================= targets =================
+const PRESETS = [
+  { label: "F♯4", midi: 66 }, { label: "D♯5", midi: 75 }, { label: "E5", midi: 76 },
+  { label: "F5", midi: 77 }, { label: "F♯5", midi: 78 }, { label: "G5", midi: 79 },
+  { label: "G♯5", midi: 80 },
+];
+let targetMidi = null, targetLabel = null;
+function renderChips() {
+  chipsEl.innerHTML = "";
+  PRESETS.forEach(p => {
+    const b = document.createElement("button");
+    b.className = "chip" + (targetLabel === p.label ? " active" : "");
+    b.textContent = p.label;
+    b.onclick = () => {
+      if (targetLabel === p.label) { targetMidi = null; targetLabel = null; }
+      else { targetMidi = p.midi; targetLabel = p.label; }
+      renderChips();
+    };
+    chipsEl.appendChild(b);
+  });
+  const play = document.createElement("button");
+  play.className = "chip"; play.style.color = "var(--ok)";
+  play.textContent = "🔊 目標音";
+  play.onclick = () => { if (targetMidi !== null) playTone(midiFreq(targetMidi)); };
+  chipsEl.appendChild(play);
+}
+let audioCtx = null;
+function playTone(freq, dur = 1.5) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = "sine"; o.frequency.value = freq;
+  g.gain.setValueAtTime(0, audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05);
+  g.gain.setValueAtTime(0.2, audioCtx.currentTime + dur - 0.1);
+  g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur + 0.05);
+}
+
+// ================= WAV encoder =================
+function encodeWAV(chunks, sampleRate) {
+  let len = 0; chunks.forEach(c => len += c.length);
+  const buf = new ArrayBuffer(44 + len * 2);
+  const v = new DataView(buf);
+  const wstr = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  wstr(0, "RIFF"); v.setUint32(4, 36 + len * 2, true); wstr(8, "WAVE");
+  wstr(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  wstr(36, "data"); v.setUint32(40, len * 2, true);
+  let off = 44;
+  for (const c of chunks) for (let i = 0; i < c.length; i++) {
+    const s = Math.max(-1, Math.min(1, c[i]));
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true); off += 2;
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+// ================= recording state =================
+let mediaRec = null, recChunks = [], wavChunks = [], recStart = 0, recording = false;
+let pitchLog = [], lastLogT = 0, timerRaf = null;
+let smoothMidi = null;
+const items = []; // {id, blob, url, log, summary, fmt, name}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60), s = sec - m * 60;
+  return m + ":" + (s < 10 ? "0" : "") + s.toFixed(1);
+}
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function buildSummary(log) {
+  if (!log.length) return { center: "–", max: "–", min: "–", voiced: 0 };
+  const midis = log.map(e => e[1]);
+  const sorted = [...midis].sort((a, b) => a - b);
+  const q = p => sorted[Math.floor(p * (sorted.length - 1))];
+  const voicedSec = log.length * 0.1;
+  // in-tune rate: frames within ±15 cents of the nearest chromatic note
+  const inTune = log.filter(e => Math.abs(e[2]) <= 15).length;
+  return {
+    center: noteName(Math.round(q(0.5))),
+    max: noteName(Math.round(Math.max(...midis))),
+    min: noteName(Math.round(Math.min(...midis))),
+    voiced: voicedSec.toFixed(1),
+    inTunePct: Math.round(100 * inTune / log.length),
+  };
+}
+
+function renderList() {
+  cntEl.textContent = "録音一覧 " + items.length;
+  if (!items.length) {
+    listEl.innerHTML = '<div class="empty">丸いボタンで録音すると、ここに一覧が表示されます。<br>各録音には音程ログが自動で付きます。</div>';
+    return;
+  }
+  listEl.innerHTML = "";
+  for (const it of items) {
+    const div = document.createElement("div");
+    div.className = "item";
+    const s = it.summary;
+    const sumTxt = s.voiced > 0
+      ? `中央:${s.center} / 最高:${s.max} / 最低:${s.min} / 音程ログ${s.voiced}秒 / ±15¢:${s.inTunePct}%`
+      : "（音声なし・無音だったかも）";
+    div.innerHTML = `
+      <div class="title"><span>${it.name}</span></div>
+      <div class="sum">${sumTxt}</div>
+      <audio controls preload="none" src="${it.url}"></audio>
+      <div class="btns">
+        <a href="${it.url}" download="${it.base}.webm">音声DL</a>
+        <button class="log">音程ログDL (JSON)</button>
+        <button class="del">削除</button>
+      </div>`;
+    div.querySelector(".log").onclick = () => {
+      const blob = new Blob([JSON.stringify(it.logJson, null, 1)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = it.base + "_pitchlog.json";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    };
+    div.querySelector(".del").onclick = () => {
+      URL.revokeObjectURL(it.url);
+      items.splice(items.indexOf(it), 1);
+      renderList();
+    };
+    listEl.prepend(div);
+  }
+}
+
+$("clearAll").onclick = () => { items.forEach(it => URL.revokeObjectURL(it.url)); items.length = 0; renderList(); };
+
+function startRecording() {
+  const fmt = document.querySelector('input[name="fmt"]:checked').value;
+  recChunks = []; wavChunks = []; pitchLog = []; lastLogT = 0;
+  recStart = performance.now();
+  recording = true;
+  recBtn.classList.add("recording");
+
+  const wantWav = fmt === "wav";
+  if (!wantWav) {
+    let mime = "";
+    for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) { mime = m; break; }
+    }
+    mediaRec = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined);
+    mediaRec.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
+  } else {
+    // raw PCM capture for WAV (mono) — muted passthrough so the node keeps processing
+    wavNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    wavNode.onaudioprocess = e => {
+      if (!recording) return;
+      wavChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    const mute = audioCtx.createGain();
+    mute.gain.value = 0;
+    micSource.connect(wavNode);
+    wavNode.connect(mute);
+    mute.connect(audioCtx.destination);
+    mediaRec = null;
+  }
+  if (mediaRec) mediaRec.start();
+
+  function tick() {
+    if (!recording) return;
+    timerEl.textContent = fmtTime((performance.now() - recStart) / 1000);
+    timerRaf = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+let wavNode = null, micStream = null, micSource = null;
+
+function stopRecording() {
+  if (!recording) return;
+  recording = false;
+  recBtn.classList.remove("recording");
+  cancelAnimationFrame(timerRaf);
+  const dur = (performance.now() - recStart) / 1000;
+  const fmt = document.querySelector('input[name="fmt"]:checked').value;
+
+  const finish = (blob, ext) => {
+    const base = "take_" + stamp();
+    const url = URL.createObjectURL(blob);
+    const summary = buildSummary(pitchLog);
+    const logJson = {
+      version: 1,
+      recorded_at: new Date().toISOString(),
+      duration_s: +dur.toFixed(2),
+      sample_rate: audioCtx.sampleRate,
+      note: "frames: [t_sec, midi, cents, clarity] — midi null = 音声なし",
+      summary,
+      frames: pitchLog.map(e => [+e[0].toFixed(2), e[1] === null ? null : +e[1].toFixed(3), e[1] === null ? null : +e[2], +(e[3] || 0).toFixed(2)]),
+    };
+    items.push({ id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: base + "." + ext, base, logJson });
+    renderList();
+  };
+
+  if (fmt === "wav") {
+    if (wavNode) { try { wavNode.disconnect(); } catch (e) {} wavNode = null; }
+    finish(encodeWAV(wavChunks, audioCtx.sampleRate), "wav");
+    wavChunks = [];
+  } else if (mediaRec && mediaRec.state !== "inactive") {
+    mediaRec.onstop = () => {
+      const type = (recChunks[0] && recChunks[0].type) || "audio/webm";
+      finish(new Blob(recChunks, { type }), type.includes("mp4") ? "mp4" : "webm");
+      recChunks = [];
+    };
+    mediaRec.stop();
+  } else if (mediaRec) {
+    // already inactive (edge)
+    const type = (recChunks[0] && recChunks[0].type) || "audio/webm";
+    finish(new Blob(recChunks, { type }), type.includes("mp4") ? "mp4" : "webm");
+    recChunks = [];
+  }
+  timerEl.textContent = "0:00.0";
+}
+
+recBtn.onclick = () => { recording ? stopRecording() : startRecording(); };
+
+// ================= tuner loop =================
+let analyser = null, anBuf = null;
+
+function loop() {
+  if (analyser) {
+    analyser.getFloatTimeDomainData(anBuf);
+    const det = detectPitch(anBuf, audioCtx.sampleRate);
+    const now = performance.now();
+    const tSec = recording ? (now - recStart) / 1000 : 0;
+
+    if (det) {
+      const midi = midiOf(det.f0);
+      if (smoothMidi === null) smoothMidi = midi;
+      else {
+        const diff = midi - smoothMidi;
+        smoothMidi += (Math.abs(diff) > 6 ? Math.sign(diff) * 6 : diff * 0.35);
+      }
+      const nn = nearestNote(midiFreq(smoothMidi));
+      noteEl.textContent = nn.name;
+      const color = Math.abs(nn.cents) <= 15 ? "var(--ok)" : Math.abs(nn.cents) <= 40 ? "var(--near)" : "var(--far)";
+      noteEl.style.color = color;
+      centsEl.textContent = nn.cents === 0 ? "✔ 合ってる！" : (nn.cents > 0 ? `♯${nn.cents} セント 高い` : `♭${Math.abs(nn.cents)} セント 低い`);
+      centsEl.style.color = color;
+      hzEl.textContent = det.f0.toFixed(1) + " Hz";
+      needle.style.left = (50 + Math.max(-50, Math.min(50, nn.cents))) + "%";
+      needle.style.opacity = 1;
+      verdictEl.textContent = Math.abs(nn.cents) <= 15 ? "🟢 合ってる！" : Math.abs(nn.cents) <= 40 ? "🟡 あと少し" : (nn.cents > 0 ? "🔴 高め → ゆるめて" : "🔴 低め → 引き締めて");
+
+      if (recording && (now - lastLogT) >= 100) {
+        pitchLog.push([tSec, +smoothMidi.toFixed(3), Math.round((smoothMidi - Math.round(smoothMidi)) * 100), +det.clarity.toFixed(2)]);
+        lastLogT = now;
+      }
+      if (targetMidi !== null) {
+        const d = smoothMidi - targetMidi;
+        targetDiffEl.textContent = `差 ${d > 0 ? "+" : ""}${d.toFixed(1)} 半音`;
+        targetDiffEl.style.color = Math.abs(d) < 0.25 ? "var(--ok)" : Math.abs(d) < 1 ? "var(--near)" : "var(--far)";
+      } else targetDiffEl.textContent = "";
+    } else {
+      smoothMidi = null;
+      noteEl.textContent = "–"; noteEl.style.color = "var(--dim)";
+      centsEl.textContent = recording ? "…" : "歌ってみて（録音前でも動きます）";
+      centsEl.style.color = "var(--dim)";
+      hzEl.textContent = ""; needle.style.opacity = 0; verdictEl.textContent = ""; targetDiffEl.textContent = "";
+      if (recording && (now - lastLogT) >= 100) {
+        pitchLog.push([tSec, null, null, 0]);
+        lastLogT = now;
+      }
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+// ================= diagnostics & start =================
+async function diagnose() {
+  const msgs = [];
+  if (!window.isSecureContext) msgs.push("⚠️ https じゃないページです（github.io なら OK）");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) msgs.push("⚠️ このブラウザはマイクAPIに未対応（Chrome/Safari最新版を推奨）");
+  else {
+    try {
+      const res = await navigator.permissions.query({ name: "microphone" });
+      msgs.push("マイク許可の状態: " + (res.state === "granted" ? "✅ 許可済み" : res.state === "denied" ? "❌ 拒否されてる → ブラウザ設定から変更" : "❓ 未確認（開始ボタンで確認が出ます）"));
+    } catch (e) { msgs.push("許可の状態は取得できない環境です（開始ボタンで確認してください）"); }
+  }
+  errEl.style.display = "block";
+  errEl.innerHTML = msgs.join("<br>");
+}
+
+$("startBtn").onclick = async () => {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 4096;
+    micSource.connect(analyser);
+    anBuf = new Float32Array(analyser.fftSize);
+    $("startBtn").style.display = "none";
+    $("main").style.display = "block";
+    renderChips();
+    loop();
+  } catch (err) {
+    console.error(err);
+    const inIframe = window.self !== window.top;
+    errEl.style.display = "block";
+    if (inIframe) {
+      errEl.innerHTML = "埋め込み画面ではマイクがブロックされてます。<br>新しいタブで開き直せば動きます。<br><br><button id=\"reopenBtn\" style=\"background:#2563eb;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;padding:11px 18px;cursor:pointer;\">↗ 新しいタブで開く</button>";
+      const rb = $("reopenBtn");
+      if (rb) rb.onclick = () => window.open(window.location.href, "_blank");
+    } else {
+      await diagnose();
+    }
+  }
+};
+
+// initial diagnostics hint
+if (window.self !== window.top) {
+  errEl.style.display = "block";
+  errEl.innerHTML = "埋め込み画面ではマイクが使えません。<br>「↗ 新しいタブで開く」か、ページを開き直してから開始してください。";
+}
+</script>
+</body>
+</html>
