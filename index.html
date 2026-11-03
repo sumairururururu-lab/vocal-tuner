@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.1</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.2</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -184,7 +184,8 @@
           </div>
           <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
             <label><input type="checkbox" id="ghAutoAdd"> GitHubに自動で追加（いっぱいになったら次のリポジトリを作る）</label>
-            <label>名前の元 <input id="ghPrefix" type="text" placeholder="vocal-takes" style="width:120px;"></label>
+            <label>名前の元 <input id="ghPrefix" type="text" placeholder="vocal-takes" style="width:110px;"></label>
+            <label>1個の上限 <input id="ghMaxMB" type="number" min="50" max="2000" step="50" style="width:70px;">MB</label>
           </div>
           <div id="ghMsg" style="font-size:11px;color:#7f8d9f;margin-top:6px;line-height:1.6;">
             保存先は6個まで。1つがいっぱいになると、自動で次の保存先に切りかえて保存します。合言葉／トークンはこの端末にだけ保存されます。
@@ -722,8 +723,8 @@ async function importFiles(fileList) {
 }
 
 // ================= 同期（複数の保存先・自動お引っ越し） =================
-const SYNC = { dests: [], active: 0, auto: false, ghAuto: false, ghPrefix: "vocal-takes" };
-let GH_FULL_KB = 900 * 1024;   // 1リポジトリ 900MB をこえたら次を作る
+const SYNC = { dests: [], active: 0, auto: false, ghAuto: false, ghPrefix: "vocal-takes", ghMaxMB: 500 };
+function ghFullKB() { return (SYNC.ghMaxMB || 500) * 1024; }   // 1リポジトリの上限(MB)
 const MAX_DESTS = 6;
 
 function syncLoad() {
@@ -735,6 +736,7 @@ function syncLoad() {
       SYNC.auto = !!j.auto;
       SYNC.ghAuto = !!j.ghAuto;
       if (j.ghPrefix) SYNC.ghPrefix = j.ghPrefix;
+      if (j.ghMaxMB) SYNC.ghMaxMB = j.ghMaxMB;
     } else {
       const old = JSON.parse(localStorage.getItem("sync_cfg") || "null");
       if (old && old.mode === "gdrive" && old.gvUrl) {
@@ -751,7 +753,7 @@ function syncLoad() {
 }
 function syncSaveCfg() {
   try { localStorage.setItem("sync_cfg2", JSON.stringify({ dests: SYNC.dests, active: SYNC.active, auto: SYNC.auto,
-    ghAuto: SYNC.ghAuto, ghPrefix: SYNC.ghPrefix })); } catch (e) {}
+    ghAuto: SYNC.ghAuto, ghPrefix: SYNC.ghPrefix, ghMaxMB: SYNC.ghMaxMB })); } catch (e) {}
 }
 function destReady(d) {
   return d.kind === "gdrive" ? !!(d.url && d.secret) : !!(d.token && d.repo);
@@ -848,29 +850,36 @@ async function txQuota(d) {
 
 /* 空きが少ない保存先は飛ばして、次の保存先を使う */
 const MIN_FREE = 100 * 1048576;   // 残り0.1GBを切ったら次の保存先へ
-function nextRepoName() {
-  const prefix = SYNC.ghPrefix || "vocal-takes";
+function reEsc(x) { return String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+async function ghNextFreeName(tpl) {
+  const base = SYNC.ghPrefix || "vocal-takes";
+  const re = new RegExp("^" + reEsc(base) + "(?:-(\\d+))?$");
   let max = 0;
-  const re = new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:-(\\d+))?$");
-  SYNC.dests.forEach(d => {
-    if (d.kind !== "github" || !d.repo) return;
-    const nm = String(d.repo).split("/")[1] || "";
-    const m = re.exec(nm);
-    if (m) max = Math.max(max, m[1] ? +m[1] : 1);
-  });
-  return prefix + "-" + (max + 1);
+  const bump = nm => { const m = re.exec(nm || ""); if (m) max = Math.max(max, m[1] ? +m[1] : 1); };
+  SYNC.dests.forEach(d => { if (d.kind === "github" && d.repo) bump(String(d.repo).split("/")[1]); });
+  try {
+    const arr = await ghReq(tpl, "/user/repos?per_page=100&affiliation=owner&sort=created");
+    (arr || []).forEach(r => bump(r.name));
+  } catch (e) {}
+  return base + "-" + (max + 1);
 }
 async function ghCreateRepo(tpl) {
   const owner = String(tpl.repo || "").split("/")[0];
-  const name = nextRepoName();
-  const j = await ghReq(tpl, "/user/repos", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: name, private: true, auto_init: true, description: "りゅうやの録音 " + name }) });
-  const full = j.full_name || ((owner ? owner + "/" : "") + name);
-  const nd = { kind: "github", name: "GitHub " + full.split("/")[1], repo: full, dir: "takes",
-    token: tpl.token, autoCreated: true, archived: false };
-  SYNC.dests.push(nd);
-  syncSaveCfg(); renderDests();
-  return nd;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const name = attempt === 0 ? await ghNextFreeName(tpl) : (SYNC.ghPrefix || "vocal-takes") + "-" + (Date.now() % 100000);
+    try {
+      const j = await ghReq(tpl, "/user/repos", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name, private: true, auto_init: true, description: "りゅうやの録音 " + name }) });
+      const full = j.full_name || ((owner ? owner + "/" : "") + name);
+      const nd = { kind: "github", name: "GitHub " + full.split("/")[1], repo: full, dir: "takes",
+        token: tpl.token, autoCreated: true, archived: false };
+      SYNC.dests.push(nd);
+      syncSaveCfg(); renderDests();
+      return nd;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("作成できませんでした");
 }
 async function pickDest() {
   const n = SYNC.dests.length;
@@ -887,7 +896,7 @@ async function pickDest() {
       try {
         const j = await ghReq(d, "/repos/" + d.repo);
         d.sizeKB = j.size || 0;
-        if (d.sizeKB > GH_FULL_KB) { d.archived = true; syncMsg("「" + d.name + "」は容量が近いので次の保存先へ", "#d7a13b"); continue; }
+        if (d.sizeKB > ghFullKB()) { d.archived = true; syncMsg("「" + d.name + "」は容量が近いので次の保存先へ", "#d7a13b"); continue; }
         d.archived = false;
       } catch (e) { continue; }
     }
@@ -1037,7 +1046,16 @@ function renderDests() {
         if (el) el.textContent = "残り: 確認中…";
         try {
           const q = await txQuota(d);
-          if (el) el.textContent = q.free === null ? "残り: 不明（GitHub）" : "残り: " + gb(q.free) + "（全体 " + gb(q.limit) + "）";
+          if (el) {
+            if (q.free === null) {
+              const j = await ghReq(d, "/repos/" + d.repo);
+              const usedMB = Math.round((j.size || 0) / 1024);
+              const left = Math.max(0, (SYNC.ghMaxMB || 500) - usedMB);
+              el.textContent = "使用 " + usedMB + "MB / 上限 " + (SYNC.ghMaxMB || 500) + "MB（あと 約" + Math.floor(left / 4.5) + "本）";
+            } else {
+              el.textContent = "残り: " + gb(q.free) + "（全体 " + gb(q.limit) + "）";
+            }
+          }
         } catch (e) { if (el) el.textContent = "残り: 取得できません"; }
       }
     });
@@ -1047,13 +1065,19 @@ function syncRenderFields() {
   if (!$("destList")) return;
   renderDests();
   $("syncAuto").checked = SYNC.auto;
-  if ($("ghAutoAdd")) { $("ghAutoAdd").checked = SYNC.ghAuto; $("ghPrefix").value = SYNC.ghPrefix || "vocal-takes"; }
+  if ($("ghAutoAdd")) {
+    $("ghAutoAdd").checked = SYNC.ghAuto;
+    $("ghPrefix").value = SYNC.ghPrefix || "vocal-takes";
+    $("ghMaxMB").value = SYNC.ghMaxMB || 500;
+  }
 }
 function syncReadFields() {
   SYNC.auto = $("syncAuto").checked;
   if ($("ghAutoAdd")) {
     SYNC.ghAuto = $("ghAutoAdd").checked;
     SYNC.ghPrefix = ($("ghPrefix").value.trim() || "vocal-takes").replace(/[^A-Za-z0-9._-]/g, "-");
+    const mm = parseInt($("ghMaxMB").value, 10);
+    SYNC.ghMaxMB = (mm && mm >= 50 && mm <= 2000) ? mm : 500;
   }
   syncSaveCfg();
 }
