@@ -105,12 +105,13 @@
   .item .btns .del { color: var(--far); }
   .hint { font-size: 11px; color: #5b6b80; text-align: center; margin-top: 14px; line-height: 1.8; }
   body.no-pitch #note, body.no-pitch #centsText, body.no-pitch #hz,
-  body.no-pitch .tuner-panel .meter, body.no-pitch #verdict,
-  body.no-pitch #targetDiff, body.no-pitch .graph-panel { display: none !important; }
+  body.no-pitch .tuner-panel .meter, body.no-pitch #verdict { display: none !important; }
+  body.no-graph .graph-panel { display: none !important; }
+  body.no-targets #chips, body.no-targets .tgt, body.no-targets #targetDiff { display: none !important; }
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.9</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.0</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -127,14 +128,14 @@
         </div>
         <div class="verdict" id="verdict"></div>
         <div class="targets" id="chips"></div>
-        <div class="targets" style="margin:6px 0 0;">
+        <div class="targets tgt" style="margin:6px 0 0;">
           <button class="chip" id="tDown" title="半音下げる">−1</button>
           <button class="chip" id="tUp" title="半音上げる">＋1</button>
           <button class="chip" id="tOctDown" title="1オクターブ下げる">−12</button>
           <button class="chip" id="tOctUp" title="1オクターブ上げる">＋12</button>
           <button class="chip" id="tCatch" style="color:#ffd166;">🎯 いま歌った音を目標に</button>
         </div>
-        <div class="targets" style="margin:6px 0 0;">
+        <div class="targets tgt" style="margin:6px 0 0;">
           <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;">目標音
             <select id="tSel" style="background:#0f131a;border:1px solid #2a3342;color:#dfe7f2;border-radius:8px;padding:4px 6px;font-size:12px;"></select>
           </label>
@@ -167,8 +168,10 @@
         <div class="fmt">
           <label style="gap:6px;">マイク <select id="micSel"><option value="">（自動）</option></select></label>
         </div>
-        <div class="fmt">
-          <label style="gap:6px;"><input type="checkbox" id="showPitch" checked> 音程と音程バーを表示する</label>
+        <div class="fmt" style="gap:14px;flex-wrap:wrap;">
+          <label style="gap:6px;"><input type="checkbox" id="showPitch" checked> 音程</label>
+          <label style="gap:6px;"><input type="checkbox" id="showGraph" checked> 音程バー</label>
+          <label style="gap:6px;"><input type="checkbox" id="showTargets" checked> 目標音のボタン</label>
         </div>
         <div class="meter-wrap">
           <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
@@ -1670,18 +1673,27 @@ function prefsLoad() {
     if (j.agc !== undefined && $("agc")) $("agc").checked = !!j.agc;
     if (j.mic) micDeviceId = j.mic;
     if (j.showPitch !== undefined && $("showPitch")) $("showPitch").checked = !!j.showPitch;
+    if (j.showGraph !== undefined && $("showGraph")) $("showGraph").checked = !!j.showGraph;
+    else if ($("showGraph") && $("showPitch")) $("showGraph").checked = $("showPitch").checked;
+    if (j.showTargets !== undefined && $("showTargets")) $("showTargets").checked = !!j.showTargets;
     applyPitchVis();
   } catch (e) {}
 }
 function applyPitchVis() {
-  const on = $("showPitch") ? $("showPitch").checked : true;
-  document.body.classList.toggle("no-pitch", !on);
+  const p = $("showPitch") ? $("showPitch").checked : true;
+  const g = $("showGraph") ? $("showGraph").checked : p;
+  const t = $("showTargets") ? $("showTargets").checked : true;
+  document.body.classList.toggle("no-pitch", !p);
+  document.body.classList.toggle("no-graph", !g);
+  document.body.classList.toggle("no-targets", !t);
 }
 function prefsSave() {
   try {
     localStorage.setItem("ui_prefs", JSON.stringify({
       agc: !!($("agc") && $("agc").checked), mic: micDeviceId || "",
-      showPitch: !!($("showPitch") ? $("showPitch").checked : true)
+      showPitch: !!($("showPitch") ? $("showPitch").checked : true),
+      showGraph: !!($("showGraph") ? $("showGraph").checked : true),
+      showTargets: !!($("showTargets") ? $("showTargets").checked : true)
     }));
   } catch (e) {}
 }
@@ -1748,7 +1760,10 @@ $("startBtn").onclick = async () => {
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
     attachMicWatch();
-    if ($("showPitch")) $("showPitch").onchange = () => { applyPitchVis(); prefsSave(); };
+    ["showPitch", "showGraph", "showTargets"].forEach(id => {
+      const el = $(id);
+      if (el) el.onchange = () => { applyPitchVis(); prefsSave(); };
+    });
     const agcEl = $("agc");
     if (agcEl) agcEl.onchange = async () => { prefsSave(); await reconnectMic(); };
     prefsLoad();
