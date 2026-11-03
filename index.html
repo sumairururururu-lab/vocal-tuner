@@ -76,8 +76,9 @@
   .list-head span { font-size: 13px; font-weight: 700; color: var(--dim); }
   .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; padding: 2px 4px; }
   .list-head button:hover { color: #cfd8e6; }
-  #songName { background:#0f131a; border:1px solid #2a3342; color:#dfe7f2; border-radius:8px;
+  #songName, #micSel { background:#0f131a; border:1px solid #2a3342; color:#dfe7f2; border-radius:8px;
     padding:5px 8px; font-size:12px; width:140px; }
+  #micSel { width:170px; }
   .meter-wrap { margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:center; }
   .meter { position:relative; width:150px; height:7px; background:#0f131a; border-radius:4px; overflow:hidden; }
   .meter-fill { height:100%; width:0%; background:#4a90ff; transition:width .07s linear; }
@@ -102,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.3</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.4</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -143,6 +144,9 @@
           <label style="gap:6px;" title="スマホのマイクは自動ゲインが切られていると極端に小さいことがあります">
             <input type="checkbox" id="agc"> マイクを自動で大きくする（小声でも反応）</label>
         </div>
+        <div class="fmt">
+          <label style="gap:6px;">マイク <select id="micSel"><option value="">（自動）</option></select></label>
+        </div>
         <div class="meter-wrap">
           <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
           <div class="meter-txt" id="meterTxt">入力 –</div>
@@ -163,6 +167,8 @@
         録音後は自動で「長さ・ピーク・無音率」をチェックします（✖や△が出たら録り直し）。<br>
         曲名を入れておくとファイル名に入って、あとで分析しやすいです<br>
         マイクは口から**10〜15cm**。小さくて反応しないときは「マイクを自動で大きくする」をON<br>
+        タブレットは**立てて、マイク穴を手や机でふさがない**。こもるときは「マイク」を切り替えて試してね<br>
+        家族の声が入ると測定できないので、**静かなときに**録るのがおすすめ<br>
         別の端末や分析用に残したいときは「全部DL」でまとめてダウンロードしてね<br><br>
         🎵 録音いらずのチューナーだけがほしい → <a href="tuner.html" style="color:#7ab0ff;">チューナー単体版</a>
       </div>
@@ -787,13 +793,16 @@ function dbgUpdate(det, rms) {
   if (!dbgEl) return;
   const dB = rms > 0 ? 20 * Math.log10(rms) : -99;
   const lv = dB > -99 ? Math.round(dB) + "dB" : "–";
+  const bright = (det && lastHiRel !== 0) ? ` ・ 高域 ${lastHiRel.toFixed(0)}dB` : "";
+  let note2 = "";
+  if (det && lastHiRel !== 0 && lastHiRel < -38) note2 = " ・ こもってる（マイクの向き/距離/別のマイクを試して）";
   dbgEl.textContent = det
-    ? `入力 ${lv} ・ 検出 ${det.f0.toFixed(0)}Hz ・ 確度 ${det.clarity.toFixed(2)}`
+    ? `入力 ${lv} ・ 検出 ${det.f0.toFixed(0)}Hz ・ 確度 ${det.clarity.toFixed(2)}` + bright + note2
     : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づく／下の「自動で大きく」をON）" : "");
   dbgEl.style.color = det ? "#4f9d6b" : "#d7a13b";
 }
 
-let normBuf = null;
+let normBuf = null, fftBuf = null, fftTick = 0, lastHiRel = 0;
 function pitchTick() {
   if (analyser) {
     analyser.getFloatTimeDomainData(anBuf);
@@ -856,6 +865,22 @@ function pitchTick() {
     }
     updateMeter(anBuf);
     dbgUpdate(det, rmsIn);
+    // 200msごとに「高域の量」を測る＝こもってないかの目安
+    // (300-800Hz を基準に、2.5-5kHz がどれだけ出ているか[dB])
+    if (det && (++fftTick % 10 === 0)) {
+      if (!fftBuf || fftBuf.length !== analyser.frequencyBinCount) fftBuf = new Float32Array(analyser.frequencyBinCount);
+      analyser.getFloatFrequencyData(fftBuf);
+      const binHz = audioCtx.sampleRate / analyser.fftSize;
+      let ref = 0, high = 0;
+      for (let i = 1; i < fftBuf.length; i++) {
+        const f = i * binHz;
+        if (f > 6000) break;
+        const p2 = Math.pow(10, fftBuf[i] / 10);
+        if (f >= 300 && f < 800) ref += p2;
+        else if (f >= 2500 && f < 5000) high += p2;
+      }
+      if (ref > 0) lastHiRel = 10 * Math.log10(Math.max(high, 1e-20) / ref);
+    }
   }
 }
 
@@ -879,9 +904,26 @@ async function diagnose() {
   errEl.innerHTML = msgs.join("<br>");
 }
 
+let micDeviceId = "";
 function micConstraints() {
   const agc = $("agc") && $("agc").checked;
-  return { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: !!agc } };
+  const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: !!agc };
+  if (micDeviceId) audio.deviceId = { exact: micDeviceId };
+  return { audio };
+}
+
+async function listMics() {
+  const sel = $("micSel");
+  if (!sel || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const ins = devs.filter(d => d.kind === "audioinput");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">（自動）</option>' + ins.map((d, i) =>
+      `<option value="${d.deviceId}">${d.label || ("マイク " + (i + 1))}</option>`).join("");
+    if (cur) sel.value = cur;
+    if (micDeviceId) sel.value = micDeviceId;
+  } catch (e) {}
 }
 
 async function reconnectMic() {
@@ -896,7 +938,9 @@ async function reconnectMic() {
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
     attachMicWatch();
-    $("savedNote").textContent = "🎚 マイク設定を切り替えました（自動ゲイン " + ($("agc").checked ? "ON" : "OFF") + "）";
+    await listMics();
+    const used = ($("micSel") && $("micSel").selectedIndex > 0) ? $("micSel").selectedOptions[0].textContent : "自動";
+    $("savedNote").textContent = "🎚 マイクを切り替えました（" + used + " / 自動ゲイン " + ($("agc").checked ? "ON" : "OFF") + "）";
   } catch (e) {
     showWarn("マイクの再設定に失敗しました");
   }
@@ -921,6 +965,14 @@ $("startBtn").onclick = async () => {
     attachMicWatch();
     const agcEl = $("agc");
     if (agcEl) agcEl.onchange = reconnectMic;
+    const micSel = $("micSel");
+    if (micSel) {
+      micSel.onchange = async () => { micDeviceId = micSel.value; await reconnectMic(); };
+      await listMics();
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener("devicechange", listMics);
+    }
     $("startBtn").style.display = "none";
     $("main").style.display = "block";
     renderChips();
