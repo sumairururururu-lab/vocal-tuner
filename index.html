@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.1</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.2</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -1088,20 +1088,24 @@ function renderDests() {
       (d.repo ? " " + String(d.repo).split("/")[1] : "") +
       (used ? "（使用中）" : d.archived ? "（過去・読み込み専用）" : "") +
       (d.autoCreated ? '<span style="color:#4f9d6b;"> 自動</span>' : "") + "</div>";
+    const lock = !d.editing ? "readonly" : "";
+    const lockCss = !d.editing ? "opacity:.55;" : "";
     if (d.kind === "gdrive") {
-      inner += '<div class="fmt" style="justify-content:flex-start;"><label>URL <input data-i="' + i + '" data-k="url" type="text" value="' + esc(d.url) + '" placeholder="https://script.google.com/macros/s/.../exec" style="width:200px;"></label></div>' +
-               '<div class="fmt" style="justify-content:flex-start;"><label>合言葉 <input data-i="' + i + '" data-k="secret" type="password" value="' + esc(d.secret) + '" style="width:140px;"></label>' +
-               '<span class="q" data-q="' + i + '" style="font-size:11px;color:#7f8d9f;margin-left:8px;">残り: ?</span></div>';
+      inner += '<div class="fmt" style="justify-content:flex-start;"><label>URL <input ' + lock + ' data-i="' + i + '" data-k="url" type="text" value="' + esc(d.url) + '" placeholder="https://script.google.com/macros/s/.../exec" style="width:200px;' + lockCss + '"></label></div>' +
+               '<div class="fmt" style="justify-content:flex-start;"><label>合言葉 <input ' + lock + ' data-i="' + i + '" data-k="secret" type="password" value="' + esc(d.secret) + '" style="width:140px;' + lockCss + '"></label></div>';
     } else {
-      inner += '<div class="fmt" style="justify-content:flex-start;"><label>リポジトリ <input data-i="' + i + '" data-k="repo" type="text" value="' + esc(d.repo) + '" style="width:190px;"></label>' +
-               '<label>フォルダ <input data-i="' + i + '" data-k="dir" type="text" value="' + esc(d.dir || "takes") + '" style="width:80px;"></label></div>' +
-               '<div class="fmt" style="justify-content:flex-start;"><label>トークン <input data-i="' + i + '" data-k="token" type="password" value="' + esc(d.token) + '" style="width:200px;"></label></div>';
+      inner += '<div class="fmt" style="justify-content:flex-start;"><label>リポジトリ <input ' + lock + ' data-i="' + i + '" data-k="repo" type="text" value="' + esc(d.repo) + '" style="width:190px;' + lockCss + '"></label>' +
+               '<label>フォルダ <input ' + lock + ' data-i="' + i + '" data-k="dir" type="text" value="' + esc(d.dir || "takes") + '" style="width:80px;' + lockCss + '"></label></div>' +
+               '<div class="fmt" style="justify-content:flex-start;"><label>トークン <input ' + lock + ' data-i="' + i + '" data-k="token" type="password" value="' + esc(d.token) + '" style="width:200px;' + lockCss + '"></label></div>';
     }
-    inner += '<div class="fmt" style="justify-content:flex-start;gap:6px;">' +
-      '<button class="chip" data-act="use" data-i="' + i + '">使用中にする</button>' +
+    inner += '<div style="font-size:11px;color:' + (used ? "#8fc9a6" : "#7f8d9f") + ';margin:6px 0 4px;" class="q" data-q="' + i + '">残り: ' + (used ? "（下のボタンで確認）" : "—") + '</div>' +
+      '<div class="fmt" style="justify-content:flex-start;gap:6px;">' +
       '<button class="chip" data-act="quota" data-i="' + i + '">残りを見る</button>' +
+      '<button class="chip" data-act="use" data-i="' + i + '">使用中にする</button>' +
+      '<button class="chip" data-act="edit" data-i="' + i + '" style="color:' + (d.editing ? "#3ddc84" : "#9fb0c3") + '">' + (d.editing ? "✓ 編集おわり" : "✎ 編集") + '</button>' +
       (SYNC.dests.length > 1 ? '<button class="chip" data-act="del" data-i="' + i + '" style="color:#ff8f8f;">削除</button>' : "") +
-      "</div>";
+      "</div>" +
+      (d.editing ? '<div style="font-size:11px;color:#d7a13b;margin-top:4px;">✎ 編集中です。終わったら「✓ 編集おわり」を押してください（誤タップ防止のため、ふだんは入力できません）</div>' : "");
     card.innerHTML = inner;
     box.appendChild(card);
   });
@@ -1115,6 +1119,7 @@ function renderDests() {
   box.querySelectorAll("button[data-act]").forEach(btn => {
     btn.addEventListener("click", async () => {
       const i = +btn.dataset.i, act = btn.dataset.act, d = SYNC.dests[i];
+      if (act === "edit") { d.editing = !d.editing; renderDests(); }
       if (act === "use") { SYNC.active = i; syncSaveCfg(); renderDests(); syncMsg("使用中の保存先を「" + d.name + "」にしました", "#3ddc84"); }
       if (act === "del") { SYNC.dests.splice(i, 1); if (SYNC.active >= SYNC.dests.length) SYNC.active = 0; syncSaveCfg(); renderDests(); }
       if (act === "quota") {
