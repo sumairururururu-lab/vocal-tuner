@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.0</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.1</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -172,7 +172,8 @@
         <div id="ghBody" style="display:none;">
           <div id="destList"></div>
           <div class="fmt" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
-            <button class="chip" id="destAdd">＋ 保存先を追加</button>
+            <button class="chip" id="destAddGv">＋ Google ドライブ</button>
+            <button class="chip" id="destAddGh">＋ GitHub</button>
             <button class="chip" id="syncSave">保存</button>
             <button class="chip" id="syncTest">接続テスト</button>
             <button class="chip" id="syncNow" style="color:#3ddc84;">今すぐ同期</button>
@@ -180,6 +181,10 @@
           </div>
           <div class="fmt" style="justify-content:flex-start;gap:14px;flex-wrap:wrap;">
             <label><input type="checkbox" id="syncAuto"> 自動でアップロード／読み込み</label>
+          </div>
+          <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
+            <label><input type="checkbox" id="ghAutoAdd"> GitHubに自動で追加（いっぱいになったら次のリポジトリを作る）</label>
+            <label>名前の元 <input id="ghPrefix" type="text" placeholder="vocal-takes" style="width:120px;"></label>
           </div>
           <div id="ghMsg" style="font-size:11px;color:#7f8d9f;margin-top:6px;line-height:1.6;">
             保存先は6個まで。1つがいっぱいになると、自動で次の保存先に切りかえて保存します。合言葉／トークンはこの端末にだけ保存されます。
@@ -717,7 +722,8 @@ async function importFiles(fileList) {
 }
 
 // ================= 同期（複数の保存先・自動お引っ越し） =================
-const SYNC = { dests: [], active: 0, auto: false };
+const SYNC = { dests: [], active: 0, auto: false, ghAuto: false, ghPrefix: "vocal-takes" };
+let GH_FULL_KB = 900 * 1024;   // 1リポジトリ 900MB をこえたら次を作る
 const MAX_DESTS = 6;
 
 function syncLoad() {
@@ -727,6 +733,8 @@ function syncLoad() {
       SYNC.dests = j.dests;
       SYNC.active = j.active || 0;
       SYNC.auto = !!j.auto;
+      SYNC.ghAuto = !!j.ghAuto;
+      if (j.ghPrefix) SYNC.ghPrefix = j.ghPrefix;
     } else {
       const old = JSON.parse(localStorage.getItem("sync_cfg") || "null");
       if (old && old.mode === "gdrive" && old.gvUrl) {
@@ -742,7 +750,8 @@ function syncLoad() {
   if (SYNC.active >= SYNC.dests.length) SYNC.active = 0;
 }
 function syncSaveCfg() {
-  try { localStorage.setItem("sync_cfg2", JSON.stringify({ dests: SYNC.dests, active: SYNC.active, auto: SYNC.auto })); } catch (e) {}
+  try { localStorage.setItem("sync_cfg2", JSON.stringify({ dests: SYNC.dests, active: SYNC.active, auto: SYNC.auto,
+    ghAuto: SYNC.ghAuto, ghPrefix: SYNC.ghPrefix })); } catch (e) {}
 }
 function destReady(d) {
   return d.kind === "gdrive" ? !!(d.url && d.secret) : !!(d.token && d.repo);
@@ -839,6 +848,30 @@ async function txQuota(d) {
 
 /* 空きが少ない保存先は飛ばして、次の保存先を使う */
 const MIN_FREE = 100 * 1048576;   // 残り0.1GBを切ったら次の保存先へ
+function nextRepoName() {
+  const prefix = SYNC.ghPrefix || "vocal-takes";
+  let max = 0;
+  const re = new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:-(\\d+))?$");
+  SYNC.dests.forEach(d => {
+    if (d.kind !== "github" || !d.repo) return;
+    const nm = String(d.repo).split("/")[1] || "";
+    const m = re.exec(nm);
+    if (m) max = Math.max(max, m[1] ? +m[1] : 1);
+  });
+  return prefix + "-" + (max + 1);
+}
+async function ghCreateRepo(tpl) {
+  const owner = String(tpl.repo || "").split("/")[0];
+  const name = nextRepoName();
+  const j = await ghReq(tpl, "/user/repos", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name, private: true, auto_init: true, description: "りゅうやの録音 " + name }) });
+  const full = j.full_name || ((owner ? owner + "/" : "") + name);
+  const nd = { kind: "github", name: "GitHub " + full.split("/")[1], repo: full, dir: "takes",
+    token: tpl.token, autoCreated: true, archived: false };
+  SYNC.dests.push(nd);
+  syncSaveCfg(); renderDests();
+  return nd;
+}
 async function pickDest() {
   const n = SYNC.dests.length;
   for (let k = 0; k < n; k++) {
@@ -848,11 +881,31 @@ async function pickDest() {
     if (d.kind === "gdrive") {
       try {
         const q = await txQuota(d);
-        if (q.free !== null && q.free < MIN_FREE) { syncMsg("「" + d.name + "」は残りが少ないので次の保存先へ", "#d7a13b"); continue; }
+        if (q.free !== null && q.free < MIN_FREE) { d.archived = true; syncMsg("「" + d.name + "」は残りが少ないので次の保存先へ", "#d7a13b"); continue; }
+      } catch (e) { continue; }
+    } else {
+      try {
+        const j = await ghReq(d, "/repos/" + d.repo);
+        d.sizeKB = j.size || 0;
+        if (d.sizeKB > GH_FULL_KB) { d.archived = true; syncMsg("「" + d.name + "」は容量が近いので次の保存先へ", "#d7a13b"); continue; }
+        d.archived = false;
       } catch (e) { continue; }
     }
     if (i !== SYNC.active) { SYNC.active = i; syncSaveCfg(); renderDests(); }
     return d;
+  }
+  // どこも使えなければ、GitHubに新しいリポジトリを作る
+  if (SYNC.ghAuto) {
+    const tpl = SYNC.dests.find(d => d.kind === "github" && d.token && d.repo);
+    if (tpl) {
+      try {
+        const nd = await ghCreateRepo(tpl);
+        SYNC.active = SYNC.dests.length - 1;
+        syncSaveCfg(); renderDests();
+        syncMsg("新しいリポジトリ「" + nd.repo + "」を作って、そこに保存します", "#3ddc84");
+        return nd;
+      } catch (e) { showWarn("リポジトリの作成に失敗：" + e.message); }
+    }
   }
   return null;
 }
@@ -946,7 +999,10 @@ function renderDests() {
     card.style.cssText = "border:1px solid #22303f;border-radius:10px;padding:8px;margin-bottom:8px;background:#101822;";
     const used = i === SYNC.active;
     let inner = '<div style="font-size:12px;margin-bottom:6px;color:' + (used ? "#3ddc84" : "#9fb0c3") + ';">' +
-      (i + 1) + "．" + (d.kind === "gdrive" ? "Google ドライブ" : "GitHub") + (used ? "（使用中）" : "") + "</div>";
+      (i + 1) + "．" + (d.kind === "gdrive" ? "Google ドライブ" : "GitHub") +
+      (d.repo ? " " + String(d.repo).split("/")[1] : "") +
+      (used ? "（使用中）" : d.archived ? "（過去・読み込み専用）" : "") +
+      (d.autoCreated ? '<span style="color:#4f9d6b;"> 自動</span>' : "") + "</div>";
     if (d.kind === "gdrive") {
       inner += '<div class="fmt" style="justify-content:flex-start;"><label>URL <input data-i="' + i + '" data-k="url" type="text" value="' + esc(d.url) + '" placeholder="https://script.google.com/macros/s/.../exec" style="width:200px;"></label></div>' +
                '<div class="fmt" style="justify-content:flex-start;"><label>合言葉 <input data-i="' + i + '" data-k="secret" type="password" value="' + esc(d.secret) + '" style="width:140px;"></label>' +
@@ -991,16 +1047,26 @@ function syncRenderFields() {
   if (!$("destList")) return;
   renderDests();
   $("syncAuto").checked = SYNC.auto;
+  if ($("ghAutoAdd")) { $("ghAutoAdd").checked = SYNC.ghAuto; $("ghPrefix").value = SYNC.ghPrefix || "vocal-takes"; }
 }
 function syncReadFields() {
   SYNC.auto = $("syncAuto").checked;
+  if ($("ghAutoAdd")) {
+    SYNC.ghAuto = $("ghAutoAdd").checked;
+    SYNC.ghPrefix = ($("ghPrefix").value.trim() || "vocal-takes").replace(/[^A-Za-z0-9._-]/g, "-");
+  }
   syncSaveCfg();
 }
 
-$("destAdd").onclick = () => {
-  if (SYNC.dests.length >= MAX_DESTS) { syncMsg("保存先は" + MAX_DESTS + "個までです", "#d7a13b"); return; }
+$("destAddGv").onclick = () => {
+  if (SYNC.dests.length >= MAX_DESTS) { syncMsg("手で足せる保存先は" + MAX_DESTS + "個までです", "#d7a13b"); return; }
   SYNC.dests.push({ kind: "gdrive", name: "Google ドライブ " + (SYNC.dests.length + 1), url: "", secret: "" });
-  syncSaveCfg(); renderDests(); syncMsg("保存先を追加しました（URLと合言葉を入れてください）", "#3ddc84");
+  syncSaveCfg(); renderDests(); syncMsg("Google ドライブを足しました（URLと合言葉を入れてください）", "#3ddc84");
+};
+$("destAddGh").onclick = () => {
+  if (SYNC.dests.length >= MAX_DESTS) { syncMsg("手で足せる保存先は" + MAX_DESTS + "個までです", "#d7a13b"); return; }
+  SYNC.dests.push({ kind: "github", name: "GitHub", repo: SYNC.ghPrefix || "vocal-takes", dir: "takes", token: "" });
+  syncSaveCfg(); renderDests(); syncMsg("GitHubを足しました（リポジトリ名とトークンを入れてください）", "#3ddc84");
 };
 $("ghToggle").onclick = () => {
   const body = $("ghBody");
