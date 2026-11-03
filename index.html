@@ -76,6 +76,15 @@
   .list-head span { font-size: 13px; font-weight: 700; color: var(--dim); }
   .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; padding: 2px 4px; }
   .list-head button:hover { color: #cfd8e6; }
+  #songName { background:#0f131a; border:1px solid #2a3342; color:#dfe7f2; border-radius:8px;
+    padding:5px 8px; font-size:12px; width:140px; }
+  .meter-wrap { margin-top:10px; display:flex; align-items:center; gap:8px; justify-content:center; }
+  .meter { position:relative; width:150px; height:7px; background:#0f131a; border-radius:4px; overflow:hidden; }
+  .meter-fill { height:100%; width:0%; background:#4a90ff; transition:width .07s linear; }
+  .meter-txt { font-size:11px; color:#7c8798; min-width:96px; text-align:left; }
+  .chk { font-size:11px; margin-top:3px; color:#8b96a8; }
+  .chk.good { color:#4f9d6b; } .chk.warn { color:#d7a13b; } .chk.bad { color:#e06c6c; }
+  .badge { font-size:10px; background:#4a2323; color:#ffb3b3; border-radius:6px; padding:1px 6px; margin-left:6px; }
   .saved-note { font-size: 11px; line-height: 1.5; color: #4f9d6b; background: #16241c; border: 1px solid #21382a;
     border-radius: 10px; padding: 7px 10px; margin-bottom: 8px; }
   .empty { font-size: 13px; color: #5b6b80; text-align: center; padding: 12px 0; }
@@ -127,6 +136,13 @@
           <label><input type="radio" name="fmt" value="auto" checked> 自動（圧縮・推奨）</label>
           <label><input type="radio" name="fmt" value="wav"> WAV（無圧縮）</label>
         </div>
+        <div class="fmt">
+          <label style="gap:6px;">曲名 <input id="songName" type="text" placeholder="例: 時ノ雨（任意）" autocomplete="off"></label>
+        </div>
+        <div class="meter-wrap">
+          <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
+          <div class="meter-txt" id="meterTxt">入力 –</div>
+        </div>
       </div>
 
       <div class="list-panel">
@@ -139,6 +155,8 @@
         🟢 中央のゾーン = 合ってる（±15セント）<br>
         録音すると音程ログ（JSON）も保存されます → 「音程ログ」ボタンでDLして分析にどうぞ<br>
         録音は端末のブラウザ内に自動保存されます（リロードしても消えません）。<br>
+        録音後は自動で「長さ・ピーク・無音率」をチェックします（✖や△が出たら録り直し）。<br>
+        曲名を入れておくとファイル名に入って、あとで分析しやすいです<br>
         別の端末や分析用に残したいときは「全部DL」でまとめてダウンロードしてね<br><br>
         🎵 録音いらずのチューナーだけがほしい → <a href="tuner.html" style="color:#7ab0ff;">チューナー単体版</a>
       </div>
@@ -156,7 +174,7 @@ function detectPitch(buf, sampleRate) {
   if (tauMax <= tauMin) return null;
   let energy = 0;
   for (let i = 0; i < buf.length; i++) energy += buf[i] * buf[i];
-  if (Math.sqrt(energy / buf.length) < 0.012) return null;
+  if (Math.sqrt(energy / buf.length) < 0.005) return null;   // 小さい声も拾う（旧0.012は小声を落としすぎ）
   const d = new Float32Array(tauMax + 1);
   for (let tau = tauMin; tau <= tauMax; tau++) {
     let sum = 0;
@@ -290,7 +308,8 @@ async function dbPut(rec) {
     await new Promise((res, rej) => {
       const tx = db.transaction(DB_STORE, "readwrite");
       tx.objectStore(DB_STORE).put({ id: rec.id, name: rec.name, base: rec.base, fmt: rec.fmt,
-        blob: rec.blob, summary: rec.summary, logJson: rec.logJson, savedAt: Date.now() });
+        blob: rec.blob, summary: rec.summary, logJson: rec.logJson, check: rec.check || null,
+        partial: !!rec.partial, savedAt: Date.now() });
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
     });
@@ -336,6 +355,119 @@ function humanSize(bytes) {
   return Math.max(1, Math.round(bytes / 1024)) + " KB";
 }
 
+// ================= 録音チェック・端末退避・画面ロック =================
+let partialId = null, partialTimer = null, lastPartialAt = 0, wakeLock = null;
+let logTimer = null, logBuf = null, recFmt = "auto", partialBase = "";
+const usedNames = new Set();
+
+function songSlug() {
+  const el = $("songName");
+  return ((el && el.value) || "").trim().replace(/\s+/g, "_").replace(/[\\/:*?"<>|]/g, "").slice(0, 24);
+}
+function uniqueName(base, ext) {
+  let name = base + "." + ext, n = 2;
+  while (usedNames.has(name)) { name = base + "_" + n + "." + ext; n++; }
+  usedNames.add(name);
+  return name;
+}
+function showWarn(msg) {
+  const n = $("savedNote");
+  if (!n) return;
+  n.style.color = "#ffb3b3"; n.style.background = "#2a1717"; n.style.borderColor = "#4a2323";
+  n.textContent = "⚠ " + msg;
+}
+async function requestWakeLock() {
+  try {
+    if (navigator.wakeLock) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch (e) { /* 非対応でも続行 */ }
+}
+function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+
+// 音程ログはタイマーで取る（rAFは画面OFF/裏で止まり、ログに穴が空くため）
+function startPitchLogger() {
+  stopPitchLogger();
+  logBuf = new Float32Array(analyser.fftSize);
+  logTimer = setInterval(() => {
+    if (!recording || !analyser || !audioCtx) return;
+    analyser.getFloatTimeDomainData(logBuf);
+    const det = detectPitch(logBuf, audioCtx.sampleRate);
+    const t = (performance.now() - recStart) / 1000;
+    if (det) {
+      const m = midiOf(det.f0);
+      pitchLog.push([+t.toFixed(2), +m.toFixed(3), Math.round((m - Math.round(m)) * 100), +det.clarity.toFixed(2)]);
+    } else {
+      pitchLog.push([+t.toFixed(2), null, null, 0]);
+    }
+  }, 100);
+}
+function stopPitchLogger() { if (logTimer) { clearInterval(logTimer); logTimer = null; } }
+
+// 録音中も5秒ごとに「途中まで」を端末に退避 → リロードしても全部は消えない
+function savePartial(force) {
+  if (!recording || !partialId || !audioCtx) return;
+  const gap = recFmt === "wav" ? 15000 : 5000;
+  const now = performance.now();
+  if (!force && now - lastPartialAt < gap) return;
+  lastPartialAt = now;
+  let blob = null, ext = "webm";
+  if (recFmt === "wav") {
+    if (wavChunks.length) { blob = encodeWAV(wavChunks, audioCtx.sampleRate); ext = "wav"; }
+  } else if (recChunks.length) {
+    const type = (recChunks[0] && recChunks[0].type) || "audio/webm";
+    blob = new Blob(recChunks, { type });
+    ext = type.includes("mp4") ? "mp4" : "webm";
+  }
+  if (!blob || !blob.size) return;
+  dbPut({ id: partialId, base: partialBase, name: uniqueName(partialBase, ext), fmt: recFmt, blob,
+    summary: {}, logJson: { partial: true, frames: [] },
+    check: { partial: true, dur: (now - recStart) / 1000 }, partial: true });
+}
+
+// 録音直後に「本当に音が入っているか」を自動チェック
+async function checkTake(blob) {
+  try {
+    const ab = await blob.arrayBuffer();
+    const decoded = await audioCtx.decodeAudioData(ab.slice(0));
+    const d = decoded.getChannelData(0);
+    const step = Math.max(1, Math.floor(d.length / 300000));
+    let peak = 0, sum = 0, quiet = 0, n = 0;
+    for (let i = 0; i < d.length; i += step) {
+      const a = Math.abs(d[i]);
+      if (a > peak) peak = a;
+      sum += a * a; n++;
+      if (a < 0.003) quiet++;
+    }
+    const rms = Math.sqrt(sum / Math.max(1, n));
+    const db = x => x > 0 ? Math.round(20 * Math.log10(x) * 10) / 10 : -99;
+    const silentPct = Math.round(100 * quiet / Math.max(1, n));
+    const dur = Math.round(decoded.duration * 10) / 10;
+    let verdict = "ok", msg = "";
+    if (dur < 1.5) { verdict = "bad"; msg = "短すぎます"; }
+    else if (db(peak) < -40) { verdict = "bad"; msg = "ほぼ無音（マイクが拾えてない？）"; }
+    else if (rms < 0.003) { verdict = "warn"; msg = "かなり小さい音"; }
+    else if (silentPct > 85) { verdict = "warn"; msg = "無音が多い"; }
+    else if (db(peak) > -0.5) { verdict = "warn"; msg = "音割れ気味"; }
+    return { verdict, msg, dur, peak: db(peak), rms: db(rms), silentPct };
+  } catch (e) {
+    return { verdict: "warn", msg: "音声チェックできませんでした（ファイル自体は保存済み）" };
+  }
+}
+
+function updateMeter(buf) {
+  const fill = $("meterFill"), txt = $("meterTxt");
+  if (!fill || !buf) return;
+  let sum = 0, peak = 0;
+  for (let i = 0; i < buf.length; i++) { const a = buf[i]; sum += a * a; if (Math.abs(a) > peak) peak = Math.abs(a); }
+  const rms = Math.sqrt(sum / buf.length);
+  const dB = rms > 0 ? 20 * Math.log10(rms) : -99;
+  fill.style.width = Math.max(0, Math.min(100, (dB + 60) / 60 * 100)) + "%";
+  fill.style.background = peak > 0.99 ? "#ff6b6b" : dB > -12 ? "#3ddc84" : dB > -30 ? "#ffd166" : "#4a90ff";
+  txt.textContent = "入力 " + (dB > -99 ? Math.round(dB) + " dB" : "–") + (recording && dB < -36 ? " ⚠ 小さい" : "");
+}
+
 function fmtTime(sec) {
   const m = Math.floor(sec / 60), s = sec - m * 60;
   return m + ":" + (s < 10 ? "0" : "") + s.toFixed(1);
@@ -346,19 +478,21 @@ function stamp() {
 }
 
 function buildSummary(log) {
-  if (!log.length) return { center: "–", max: "–", min: "–", voiced: 0 };
-  const midis = log.map(e => e[1]);
+  // 無音フレーム（midi=null）を必ず除外する。混ざると C-1 など誤表示になる
+  const voicedFrames = log.filter(e => e[1] !== null && isFinite(e[1]));
+  const spanSec = log.length > 1 ? (log[log.length - 1][0] - log[0][0]) : 0;
+  if (!voicedFrames.length) return { center: "–", max: "–", min: "–", voiced: 0, inTunePct: 0, span: +spanSec.toFixed(1) };
+  const midis = voicedFrames.map(e => e[1]);
   const sorted = [...midis].sort((a, b) => a - b);
   const q = p => sorted[Math.floor(p * (sorted.length - 1))];
-  const voicedSec = log.length * 0.1;
-  // in-tune rate: frames within ±15 cents of the nearest chromatic note
-  const inTune = log.filter(e => Math.abs(e[2]) <= 15).length;
+  const inTune = voicedFrames.filter(e => Math.abs(e[2]) <= 15).length;
   return {
     center: noteName(Math.round(q(0.5))),
     max: noteName(Math.round(Math.max(...midis))),
     min: noteName(Math.round(Math.min(...midis))),
-    voiced: voicedSec.toFixed(1),
-    inTunePct: Math.round(100 * inTune / log.length),
+    voiced: (voicedFrames.length * 0.1).toFixed(1),
+    inTunePct: Math.round(100 * inTune / voicedFrames.length),
+    span: +spanSec.toFixed(1),
   };
 }
 
@@ -374,15 +508,31 @@ function renderList() {
     const div = document.createElement("div");
     div.className = "item";
     const s = it.summary;
+    const c = it.check;
+    const durS = it.logJson && it.logJson.duration_s ? it.logJson.duration_s : (c && c.dur);
+    const durTxt = durS ? `録音${durS}秒 / ` : "";
     const sumTxt = s.voiced > 0
-      ? `中央:${s.center} / 最高:${s.max} / 最低:${s.min} / 音程ログ${s.voiced}秒 / ±15¢:${s.inTunePct}%`
-      : "（音声なし・無音だったかも）";
+      ? `${durTxt}歌ってた時間:${s.voiced}秒 / 中央:${s.center} / 最高:${s.max} / 最低:${s.min} / ±15¢:${s.inTunePct}%`
+      : `${durTxt}（音声なし・無音だったかも）`;
+    let chkTxt;
+    if (it.partial || (c && c.partial)) {
+      chkTxt = `<div class="chk bad">⚠ 録音の途中データ（リロードで中断／不完全。参考には使えます）</div>`;
+    } else if (c && c.dur !== undefined) {
+      const cls = c.verdict === "bad" ? "bad" : c.verdict === "warn" ? "warn" : "good";
+      const mark = c.verdict === "bad" ? "✖" : c.verdict === "warn" ? "△" : "✔";
+      chkTxt = `<div class="chk ${cls}">${mark} ${c.dur}秒 / ピーク ${c.peak}dB / 平均 ${c.rms}dB / 無音 ${c.silentPct}%${c.msg ? " ・ " + c.msg : ""}</div>`;
+    } else if (c && c.msg) {
+      chkTxt = `<div class="chk warn">△ ${c.msg}</div>`;
+    } else {
+      chkTxt = `<div class="chk">… 音声をチェック中</div>`;
+    }
     div.innerHTML = `
-      <div class="title"><span>${it.name}</span></div>
+      <div class="title"><span>${it.name}${(it.partial || (c && c.partial)) ? '<span class="badge">途中</span>' : ''}</span></div>
       <div class="sum">${sumTxt}</div>
+      ${chkTxt}
       <audio controls preload="none" src="${it.url}"></audio>
       <div class="btns">
-        <a href="${it.url}" download="${it.base}.webm">音声DL</a>
+        <a href="${it.url}" download="${it.name}">音声DL</a>
         <button class="log">音程ログDL (JSON)</button>
         <button class="del">削除</button>
       </div>`;
@@ -433,8 +583,10 @@ $("dlAll").onclick = async () => {
   recs.sort((a, b) => a.id - b.id);
   for (const r of recs) {
     if (!r.blob) continue;
+    if (r.name) usedNames.add(r.name);
     items.push({ id: r.id, blob: r.blob, url: URL.createObjectURL(r.blob), log: [],
-      summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson });
+      summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
+      check: r.check || null, partial: !!r.partial });
   }
   renderList();
 })();
@@ -445,11 +597,16 @@ window.addEventListener("beforeunload", e => {
 });
 
 function startRecording() {
+  if (!micStream) { showWarn("マイクがまだ準備できていません。ページを再読み込みして開始を押してね"); return; }
   const fmt = document.querySelector('input[name="fmt"]:checked').value;
+  recFmt = fmt;
   recChunks = []; wavChunks = []; pitchLog = []; lastLogT = 0;
   recStart = performance.now();
   recording = true;
   recBtn.classList.add("recording");
+  const song = songSlug();
+  partialBase = "take_" + stamp() + (song ? "_" + song : "");
+  partialId = Date.now(); lastPartialAt = 0;
 
   const wantWav = fmt === "wav";
   if (!wantWav) {
@@ -458,7 +615,7 @@ function startRecording() {
       if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) { mime = m; break; }
     }
     mediaRec = new MediaRecorder(micStream, mime ? { mimeType: mime } : undefined);
-    mediaRec.ondataavailable = e => { if (e.data.size) recChunks.push(e.data); };
+    mediaRec.ondataavailable = e => { if (e.data.size) { recChunks.push(e.data); savePartial(false); } };
   } else {
     // raw PCM capture for WAV (mono) — muted passthrough so the node keeps processing
     wavNode = audioCtx.createScriptProcessor(4096, 1, 1);
@@ -473,7 +630,11 @@ function startRecording() {
     mute.connect(audioCtx.destination);
     mediaRec = null;
   }
-  if (mediaRec) mediaRec.start();
+  if (mediaRec) mediaRec.start(1000);   // 1秒ごとに受け取る（途中までの退避用）
+  startPitchLogger();
+  requestWakeLock();
+  clearInterval(partialTimer);
+  partialTimer = setInterval(() => savePartial(false), 5000);
 
   function tick() {
     if (!recording) return;
@@ -490,32 +651,35 @@ function stopRecording() {
   recording = false;
   recBtn.classList.remove("recording");
   cancelAnimationFrame(timerRaf);
+  stopPitchLogger();
+  clearInterval(partialTimer);
+  releaseWakeLock();
   const dur = (performance.now() - recStart) / 1000;
   const fmt = document.querySelector('input[name="fmt"]:checked').value;
 
   const finish = (blob, ext) => {
-    const base = "take_" + stamp();
+    const song = songSlug();
+    const base = "take_" + stamp() + (song ? "_" + song : "");
     const url = URL.createObjectURL(blob);
     const summary = buildSummary(pitchLog);
     const logJson = {
-      version: 1,
+      version: 2,
       recorded_at: new Date().toISOString(),
+      song: song || null,
       duration_s: +dur.toFixed(2),
       sample_rate: audioCtx.sampleRate,
       note: "frames: [t_sec, midi, cents, clarity] — midi null = 音声なし",
       summary,
       frames: pitchLog.map(e => [+e[0].toFixed(2), e[1] === null ? null : +e[1].toFixed(3), e[1] === null ? null : +e[2], +(e[3] || 0).toFixed(2)]),
     };
-    const rec = { id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: base + "." + ext, base, logJson };
+    const rec = { id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: uniqueName(base, ext), base, logJson, check: null, partial: false };
     items.push(rec);
     renderList();
+    if (partialId) { dbDel(partialId); partialId = null; }   // 途中データは完成版に置き換え
     dbPut(rec).then(ok => {  // 端末内に保存（リロードしても残る）
-      if (!ok) {
-        const n = $("savedNote");
-        n.style.color = "#ff8f8f"; n.style.background = "#2a1717"; n.style.borderColor = "#4a2323";
-        n.textContent = "⚠ 端末内に保存できませんでした（空き容量不足かも）。この録音は「音声」ボタンでDLして残してください。";
-      }
+      if (!ok) showWarn("端末内に保存できませんでした（空き容量不足かも）。この録音は「音声」ボタンでDLして残してください。");
     });
+    checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
   };
 
   if (fmt === "wav") {
@@ -634,10 +798,6 @@ function loop() {
       needle.style.opacity = 1;
       verdictEl.textContent = Math.abs(nn.cents) <= 15 ? "🟢 合ってる！" : Math.abs(nn.cents) <= 40 ? "🟡 あと少し" : (nn.cents > 0 ? "🔴 高め → ゆるめて" : "🔴 低め → 引き締めて");
 
-      if (recording && (now - lastLogT) >= 100) {
-        pitchLog.push([tSec, +smoothMidi.toFixed(3), Math.round((smoothMidi - Math.round(smoothMidi)) * 100), +det.clarity.toFixed(2)]);
-        lastLogT = now;
-      }
       if (targetMidi !== null) {
         const d = smoothMidi - targetMidi;
         targetDiffEl.textContent = `差 ${d > 0 ? "+" : ""}${d.toFixed(1)} 半音`;
@@ -650,13 +810,10 @@ function loop() {
       centsEl.textContent = recording ? "…" : "歌ってみて（録音前でも動きます）";
       centsEl.style.color = "var(--dim)";
       hzEl.textContent = ""; needle.style.opacity = 0; verdictEl.textContent = ""; targetDiffEl.textContent = "";
-      if (recording && (now - lastLogT) >= 100) {
-        pitchLog.push([tSec, null, null, 0]);
-        lastLogT = now;
-      }
       pushSample(now / 1000, null);
     }
   }
+  updateMeter(anBuf);
   drawGraph(performance.now() / 1000);
   requestAnimationFrame(loop);
 }
@@ -687,6 +844,10 @@ $("startBtn").onclick = async () => {
     analyser.fftSize = 4096;
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
+    micStream.getAudioTracks().forEach(tr => {
+      tr.addEventListener("ended", () => { if (recording) showWarn("マイクが切断されました。録音を止めて開始し直してね"); });
+      tr.addEventListener("mute", () => { if (recording) showWarn("マイクがミュート状態になっています"); });
+    });
     $("startBtn").style.display = "none";
     $("main").style.display = "block";
     renderChips();
@@ -704,6 +865,16 @@ $("startBtn").onclick = async () => {
     }
   }
 };
+
+// 画面ロック・タブ切替・ページ離脱への備え
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") savePartial(true);
+  else {
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    if (recording && !wakeLock) requestWakeLock();
+  }
+});
+window.addEventListener("pagehide", () => savePartial(true));
 
 // initial diagnostics hint
 if (window.self !== window.top) {
