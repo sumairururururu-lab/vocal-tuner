@@ -102,7 +102,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー</h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.2</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -143,6 +143,7 @@
           <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
           <div class="meter-txt" id="meterTxt">入力 –</div>
         </div>
+        <div id="dbg" style="text-align:center;font-size:11px;color:#7c8798;margin-top:6px;line-height:1.5;">入力 – ・ 待機中</div>
       </div>
 
       <div class="list-panel">
@@ -631,8 +632,7 @@ function startRecording() {
     mediaRec = null;
   }
   if (mediaRec) mediaRec.start(1000);   // 1秒ごとに受け取る（途中までの退避用）
-  startPitchLogger();
-  requestWakeLock();
+  requestWakeLock();   // 音程ログは pitchTick 側で取る（二重検出しない）
   clearInterval(partialTimer);
   partialTimer = setInterval(() => savePartial(false), 5000);
 
@@ -651,7 +651,6 @@ function stopRecording() {
   recording = false;
   recBtn.classList.remove("recording");
   cancelAnimationFrame(timerRaf);
-  stopPitchLogger();
   clearInterval(partialTimer);
   releaseWakeLock();
   const dur = (performance.now() - recStart) / 1000;
@@ -773,9 +772,27 @@ function drawGraph(nowSec) {
   }
 }
 
-function loop() {
+// 音程の検出はタイマー（20ms）で行い、描画は rAF で行う。
+// rAFは画面OFF・タブ裏で止まるので、検出とログを分離している。
+let detectTimer = null, dbgEl = null;
+
+function dbgUpdate(det, rms) {
+  if (!dbgEl) dbgEl = $("dbg");
+  if (!dbgEl) return;
+  const dB = rms > 0 ? 20 * Math.log10(rms) : -99;
+  const lv = dB > -99 ? Math.round(dB) + "dB" : "–";
+  dbgEl.textContent = det
+    ? `入力 ${lv} ・ 検出 ${det.f0.toFixed(0)}Hz ・ 確度 ${det.clarity.toFixed(2)}`
+    : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づくか、もっと大きく）" : "");
+  dbgEl.style.color = det ? "#4f9d6b" : "#d7a13b";
+}
+
+function pitchTick() {
   if (analyser) {
     analyser.getFloatTimeDomainData(anBuf);
+    let e = 0;
+    for (let i = 0; i < anBuf.length; i++) e += anBuf[i] * anBuf[i];
+    const rmsIn = Math.sqrt(e / anBuf.length);
     const det = detectPitch(anBuf, audioCtx.sampleRate);
     const now = performance.now();
     const tSec = recording ? (now - recStart) / 1000 : 0;
@@ -812,10 +829,24 @@ function loop() {
       hzEl.textContent = ""; needle.style.opacity = 0; verdictEl.textContent = ""; targetDiffEl.textContent = "";
       pushSample(now / 1000, null);
     }
+    // 録音中の音程ログ（約0.1秒ごと）
+    if (recording && (now - lastLogT) >= 95) {
+      lastLogT = now;
+      if (det) {
+        const m = midiOf(det.f0);
+        pitchLog.push([+tSec.toFixed(2), +m.toFixed(3), Math.round((m - Math.round(m)) * 100), +det.clarity.toFixed(2)]);
+      } else {
+        pitchLog.push([+tSec.toFixed(2), null, null, 0]);
+      }
+    }
+    updateMeter(anBuf);
+    dbgUpdate(det, rmsIn);
   }
-  updateMeter(anBuf);
+}
+
+function drawTick() {
   drawGraph(performance.now() / 1000);
-  requestAnimationFrame(loop);
+  requestAnimationFrame(drawTick);
 }
 
 // ================= diagnostics & start =================
@@ -851,7 +882,9 @@ $("startBtn").onclick = async () => {
     $("startBtn").style.display = "none";
     $("main").style.display = "block";
     renderChips();
-    loop();
+    if (detectTimer) clearInterval(detectTimer);
+    detectTimer = setInterval(pitchTick, 20);
+    drawTick();
   } catch (err) {
     console.error(err);
     const inIframe = window.self !== window.top;
