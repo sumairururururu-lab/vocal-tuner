@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.9</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.0</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -189,7 +189,7 @@
 
       <div class="list-panel">
         <div class="saved-note" id="savedNote">✔ 録音はこの端末のブラウザ内（IndexedDB）に自動保存されます。ページを再読み込みしても消えません。</div>
-        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="importBtn">📥 読み込み</button><button id="shareAll">📤 全部共有</button><button id="dlAll">全部DL</button><button id="clearAll">すべて削除</button></div>
+        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="importBtn">📥 読み込み</button><button id="shareAll">📤 全部共有</button><button id="dlAll">全部DL</button><button id="stripOld">🧹 音声だけ消す</button><button id="clearAll">すべて削除</button></div>
         <input type="file" id="importFile" multiple accept="audio/*,video/mp4,.webm,.wav,.mp4,.m4a,.opus,.ogg,.json" style="display:none">
         <div class="saved-note" style="background:#141c28;border-color:#22303f;color:#7f8d9f;">
           べつの端末とやりとりするとき：<b>📤 全部共有</b> でGoogle Drive・LINEなどに送って、べつの端末で <b>📥 読み込み</b> を押してそのファイルを選ぶと、この一覧に戻ります（自動同期ではないので、手で運ぶ形）。
@@ -391,8 +391,8 @@ async function dbPut(rec) {
     await new Promise((res, rej) => {
       const tx = db.transaction(DB_STORE, "readwrite");
       tx.objectStore(DB_STORE).put({ id: rec.id, name: rec.name, base: rec.base, fmt: rec.fmt,
-        blob: rec.blob, summary: rec.summary, logJson: rec.logJson, check: rec.check || null,
-        partial: !!rec.partial, savedAt: Date.now() });
+        blob: rec.blob || null, summary: rec.summary, logJson: rec.logJson, check: rec.check || null,
+        partial: !!rec.partial, audioRemoved: !!rec.audioRemoved, savedAt: Date.now() });
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
     });
@@ -611,16 +611,26 @@ function renderList() {
     }
     div.innerHTML = `
       <div class="title"><span>${it.name}${(it.partial || (c && c.partial)) ? '<span class="badge">途中</span>' : ''}</span></div>
-      <div class="sum">${sumTxt}${it.uploaded ? ' <span style="color:#4f9d6b;">☁同期済</span>' : ''}</div>
+      <div class="sum">${sumTxt}${it.uploaded ? ' <span style="color:#4f9d6b;">☁同期済</span>' : ''}${it.audioRemoved ? ' <span style="color:#7f8d9f;">🔇音声なし</span>' : ''}</div>
       ${chkTxt}
-      <audio controls preload="none" src="${it.url}"></audio>
+      ${it.blob
+        ? `<audio controls preload="none" src="${it.url}"></audio>
       <div class="btns">
         <a href="${it.url}" download="${it.name}">音声DL</a>
         <button class="share">📤 共有</button>
         <button class="log">音程ログDL (JSON)</button>
+        <button class="strip">音声だけ消す</button>
         <button class="del">削除</button>
-      </div>`;
-    div.querySelector(".share").onclick = () => shareTakes([it]);
+      </div>`
+        : `<div class="chk" style="color:#7f8d9f;">🔇 音声は消しました（音程の記録だけ残っています）</div>
+      <div class="btns">
+        <button class="log">音程ログDL (JSON)</button>
+        <button class="del">削除</button>
+      </div>`}`;
+    const shareBtn = div.querySelector(".share");
+    if (shareBtn) shareBtn.onclick = () => shareTakes([it]);
+    const stripBtn = div.querySelector(".strip");
+    if (stripBtn) stripBtn.onclick = () => stripAudioConfirm(it);
     div.querySelector(".log").onclick = () => {
       const blob = new Blob([JSON.stringify(it.logJson, null, 1)], { type: "application/json" });
       const a = document.createElement("a");
@@ -642,7 +652,7 @@ function renderList() {
 // ================= べつの端末へ運ぶ（共有／読み込み） =================
 async function shareTakes(list) {
   try {
-    const files = list.map(it => {
+    const files = list.filter(it => it.blob).map(it => {
       const ext = (it.name.split(".").pop() || "webm").toLowerCase();
       return new File([it.blob], it.name, { type: it.blob.type || "audio/" + ext });
     });
@@ -655,6 +665,7 @@ async function shareTakes(list) {
   }
   // 共有が使えない端末ではダウンロードで代用
   for (const it of list) {
+    if (!it.url) continue;
     const a = document.createElement("a");
     a.href = it.url; a.download = it.name;
     document.body.appendChild(a); a.click(); a.remove();
@@ -827,7 +838,7 @@ async function txQuota(d) {
 }
 
 /* 空きが少ない保存先は飛ばして、次の保存先を使う */
-const MIN_FREE = 300 * 1048576;
+const MIN_FREE = 100 * 1048576;   // 残り0.1GBを切ったら次の保存先へ
 async function pickDest() {
   const n = SYNC.dests.length;
   for (let k = 0; k < n; k++) {
@@ -893,6 +904,29 @@ async function syncPull() {
         items.push(rec); local.add(f.name); renderList(); added++;
         await dbPut(rec);
         checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
+      } catch (e) {}
+    }
+  }
+  // 音声が消されていてログだけ残っているテイクも拾う
+  for (const d of SYNC.dests) {
+    if (!destReady(d)) continue;
+    let list;
+    try { list = await txList(d); } catch (e) { continue; }
+    const basesWithAudio = new Set();
+    list.forEach(f => { if (!/_pitchlog\.json$/i.test(f.name)) basesWithAudio.add(f.name.replace(/\.[^.]+$/, "")); });
+    for (const f of list) {
+      if (!/_pitchlog\.json$/i.test(f.name)) continue;
+      const base = f.name.replace(/_pitchlog\.json$/i, "");
+      if (basesWithAudio.has(base)) continue;
+      if (items.some(it => it.base === base)) continue;
+      try {
+        const logJson = JSON.parse(await (await txGet(d, f)).text());
+        const summary = buildSummary(logJson.frames || []);
+        const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: null, url: null,
+          log: [], summary: summary, fmt: "sync", name: base + "（音声なし）", base: base,
+          logJson: logJson, check: null, partial: false, uploaded: true, audioRemoved: true };
+        items.push(rec); renderList(); added++;
+        await dbPut(rec);
       } catch (e) {}
     }
   }
@@ -1030,6 +1064,61 @@ $("clearAll").onclick = async () => {
   await dbClear();
 };
 
+// ================= 音声だけ消す（音程の記録は残す） =================
+function takeTime(it) {
+  const m = /^take_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/.exec(it.name || "");
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+  return it.id || 0;
+}
+async function deleteCloudAudio(name) {
+  let ok = 0;
+  for (const d of SYNC.dests) {
+    if (!destReady(d)) continue;
+    try {
+      if (d.kind === "gdrive") {
+        const j = await gvReq(d, { action: "list" });
+        const hit = (j.files || []).find(f => f.name === name);
+        if (hit) { await gvReq(d, { action: "delete", id: hit.id }); ok++; }
+      } else {
+        const path = (d.dir || "takes") + "/" + encodeURIComponent(name);
+        const cur = await ghReq(d, "/repos/" + d.repo + "/contents/" + path);
+        await ghReq(d, "/repos/" + d.repo + "/contents/" + path, { method: "DELETE",
+          body: JSON.stringify({ message: "log only: " + name, sha: cur.sha, branch: "main" }),
+          headers: { "Content-Type": "application/json" } });
+        ok++;
+      }
+    } catch (e) {}
+  }
+  return ok;
+}
+async function stripAudio(it, alsoCloud) {
+  if (alsoCloud && it.uploaded && syncReady()) await deleteCloudAudio(it.name);
+  if (it.url) { URL.revokeObjectURL(it.url); it.url = null; }
+  it.blob = null;
+  it.audioRemoved = true;
+  await dbPut(it);
+  renderList();
+}
+async function stripAudioConfirm(it) {
+  if (!confirm("この録音の「音声だけ」を消します。音程の記録（±15¢・中央・最高・最低など）は残ります。よろしいですか？")) return;
+  await stripAudio(it, true);
+  showWarn("音声だけ消しました（記録は残っています）");
+}
+$("stripOld").onclick = async () => {
+  const ans = prompt("何日より前の録音の「音声だけ」を消しますか？\n（音程の記録は全部残ります）", "30");
+  if (ans === null) return;
+  const days = parseInt(ans, 10);
+  if (!days || days <= 0) return;
+  const cut = Date.now() - days * 86400000;
+  const targets = items.filter(it => it.blob && takeTime(it) < cut);
+  if (!targets.length) { showWarn(days + "日より前の音声はありません（消すものはありませんでした）"); return; }
+  const size = targets.reduce((a, it) => a + (it.blob ? it.blob.size : 0), 0);
+  if (!confirm(targets.length + "本の音声（" + humanSize(size) + "）を消します。\n音程の記録は全部残ります。よろしいですか？")) return;
+  let n = 0;
+  for (const it of targets) { await stripAudio(it, true); n++; }
+  showWarn(n + "本の音声を消しました（記録は残っています）");
+};
+
 $("dlAll").onclick = async () => {
   if (!items.length) return;
   const list = [...items].sort((a, b) => a.id - b.id);
@@ -1049,9 +1138,10 @@ $("dlAll").onclick = async () => {
   const recs = await dbGetAll();
   recs.sort((a, b) => a.id - b.id);
   for (const r of recs) {
-    if (!r.blob) continue;
+    if (!r.blob && !r.audioRemoved) continue;
     if (r.name) usedNames.add(r.name);
-    items.push({ id: r.id, blob: r.blob, url: URL.createObjectURL(r.blob), log: [],
+    items.push({ id: r.id, blob: r.blob || null, url: r.blob ? URL.createObjectURL(r.blob) : null, log: [],
+      audioRemoved: !!r.audioRemoved,
       summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
       check: r.check || null, partial: !!r.partial });
   }
