@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.7</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.8</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -168,26 +168,44 @@
       </div>
 
       <div class="list-panel" style="margin-bottom:12px;">
-        <div class="list-head"><span>🔁 GitHub自動同期</span><button id="ghToggle">設定を開く</button></div>
+        <div class="list-head"><span>🔁 自動バックアップ／別端末同期</span><button id="ghToggle">設定を開く</button></div>
         <div id="ghBody" style="display:none;">
           <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
-            <label>リポジトリ <input id="ghRepo" type="text" placeholder="ユーザー名/リポジトリ" autocomplete="off" style="width:210px;"></label>
-            <label>フォルダ <input id="ghDir" type="text" placeholder="takes" autocomplete="off" style="width:90px;"></label>
+            <label>保存先
+              <select id="syncMode" style="background:#0d141c;color:#e6edf3;border:1px solid #26323f;border-radius:8px;padding:6px;">
+                <option value="gdrive">Google ドライブ（15GB）</option>
+                <option value="github">GitHub（無料）</option>
+              </select>
+            </label>
           </div>
-          <div class="fmt" style="justify-content:flex-start;">
-            <label>トークン <input id="ghToken" type="password" placeholder="ghp_...（この端末にだけ保存）" autocomplete="off" style="width:230px;"></label>
+          <div id="gvBox">
+            <div class="fmt" style="justify-content:flex-start;">
+              <label>URL <input id="gvUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" style="width:250px;"></label>
+            </div>
+            <div class="fmt" style="justify-content:flex-start;">
+              <label>合言葉 <input id="gvSecret" type="password" placeholder="自分で決めた合言葉" autocomplete="off" style="width:180px;"></label>
+            </div>
+          </div>
+          <div id="ghBox" style="display:none;">
+            <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
+              <label>リポジトリ <input id="ghRepo" type="text" placeholder="ユーザー名/リポジトリ" autocomplete="off" style="width:210px;"></label>
+              <label>フォルダ <input id="ghDir" type="text" placeholder="takes" autocomplete="off" style="width:90px;"></label>
+            </div>
+            <div class="fmt" style="justify-content:flex-start;">
+              <label>トークン <input id="ghToken" type="password" placeholder="ghp_...（この端末にだけ保存）" autocomplete="off" style="width:230px;"></label>
+            </div>
           </div>
           <div class="fmt" style="justify-content:flex-start;gap:14px;flex-wrap:wrap;">
-            <label><input type="checkbox" id="ghAuto"> 自動でアップロード／読み込み</label>
+            <label><input type="checkbox" id="syncAuto"> 自動でアップロード／読み込み</label>
           </div>
           <div class="fmt" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
-            <button class="chip" id="ghSave">保存</button>
-            <button class="chip" id="ghTest">接続テスト</button>
-            <button class="chip" id="ghSync" style="color:#3ddc84;">今すぐ同期</button>
-            <button class="chip" id="ghForget" style="color:#ff8f8f;">トークンを消す</button>
+            <button class="chip" id="syncSave">保存</button>
+            <button class="chip" id="syncTest">接続テスト</button>
+            <button class="chip" id="syncNow" style="color:#3ddc84;">今すぐ同期</button>
+            <button class="chip" id="syncForget" style="color:#ff8f8f;">設定を消す</button>
           </div>
           <div id="ghMsg" style="font-size:11px;color:#7f8d9f;margin-top:6px;line-height:1.6;">
-            非公開リポジトリ（sumairururururu-lab/vocal-takes）に録音を保存します。トークンはこの端末のブラウザにだけ保存され、外部には送りません。
+            クラウドに録音をためて、ほかの端末でも同じ一覧を使えます。合言葉／トークンはこの端末のブラウザにだけ保存されます。
           </div>
         </div>
       </div>
@@ -710,35 +728,26 @@ async function importFiles(fileList) {
   else $("savedNote").textContent = "📥 " + added + "本を読み込みました（この端末に保存済み）";
 }
 
-// ================= GitHub 自動同期（非公開リポジトリ） =================
-const GH = { repo: "sumairururururu-lab/vocal-takes", dir: "takes", token: "", auto: false };
+// ================= 同期（Google ドライブ / GitHub） =================
+const SYNC = { mode: "gdrive", gvUrl: "", gvSecret: "",
+               ghRepo: "sumairururururu-lab/vocal-takes", ghDir: "takes", ghToken: "", auto: false };
 
-function ghLoad() {
+function syncLoad() {
   try {
-    const j = JSON.parse(localStorage.getItem("gh_sync") || "{}");
-    if (j.repo) GH.repo = j.repo;
-    if (j.dir) GH.dir = j.dir;
-    if (typeof j.auto === "boolean") GH.auto = j.auto;
-    if (j.token) GH.token = j.token;
+    const j = JSON.parse(localStorage.getItem("sync_cfg") || "{}");
+    Object.keys(SYNC).forEach(k => { if (j[k] !== undefined && j[k] !== null) SYNC[k] = j[k]; });
   } catch (e) {}
 }
-function ghSave() { try { localStorage.setItem("gh_sync", JSON.stringify(GH)); } catch (e) {} }
-function ghMsg(t, col) {
+function syncSaveCfg() { try { localStorage.setItem("sync_cfg", JSON.stringify(SYNC)); } catch (e) {} }
+function syncReady() {
+  if (!SYNC.auto) return false;
+  return SYNC.mode === "gdrive" ? !!(SYNC.gvUrl && SYNC.gvSecret) : !!(SYNC.ghToken && SYNC.ghRepo);
+}
+function syncMsg(t, col) {
   const el = $("ghMsg");
   if (!el) return;
   el.textContent = t;
   el.style.color = col || "#7f8d9f";
-}
-async function ghReq(path, opts) {
-  opts = opts || {};
-  const r = await fetch("https://api.github.com" + path, {
-    method: opts.method || "GET",
-    headers: Object.assign({ Authorization: "Bearer " + GH.token, Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28" }, opts.headers || {}),
-    body: opts.body
-  });
-  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 100));
-  return r.status === 204 ? {} : r.json();
 }
 function blobToB64(blob) {
   return new Promise((res, rej) => {
@@ -748,56 +757,120 @@ function blobToB64(blob) {
     fr.readAsDataURL(blob);
   });
 }
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64), len = bin.length, u8 = new Uint8Array(len);
+  for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime || "application/octet-stream" });
+}
+
+/* --- Google ドライブ（Apps Script 経由） --- */
+async function gvReq(payload) {
+  if (!SYNC.gvUrl) throw new Error("URLが未設定");
+  const body = JSON.stringify(Object.assign({ secret: SYNC.gvSecret }, payload));
+  const r = await fetch(SYNC.gvUrl, { method: "POST", redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" }, body: body });
+  const t = await r.text();
+  let j;
+  try { j = JSON.parse(t); } catch (e) { throw new Error("応答がJSONでない（" + t.slice(0, 60) + "）"); }
+  if (!j.ok) throw new Error(j.error || "サーバーエラー");
+  return j;
+}
+
+/* --- GitHub --- */
+async function ghReq(path, opts) {
+  opts = opts || {};
+  const r = await fetch("https://api.github.com" + path, {
+    method: opts.method || "GET",
+    headers: Object.assign({ Authorization: "Bearer " + SYNC.ghToken, Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28" }, opts.headers || {}),
+    body: opts.body
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 100));
+  return r.status === 204 ? {} : r.json();
+}
 async function ghPut(name, blob) {
-  const path = GH.dir + "/" + encodeURIComponent(name);
+  const path = SYNC.ghDir + "/" + encodeURIComponent(name);
   const content = await blobToB64(blob);
   let sha = null;
-  try { const cur = await ghReq("/repos/" + GH.repo + "/contents/" + path); sha = cur.sha; } catch (e) {}
+  try { const cur = await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + path); sha = cur.sha; } catch (e) {}
   const body = { message: "add " + name, content: content, branch: "main" };
   if (sha) body.sha = sha;
-  await ghReq("/repos/" + GH.repo + "/contents/" + path, { method: "PUT", body: JSON.stringify(body),
+  await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + path, { method: "PUT", body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" } });
 }
-async function ghUploadTake(rec) {
-  if (!GH.token) return false;
+
+/* --- 共通トランスポート --- */
+async function txUpload(name, blob) {
+  if (SYNC.mode === "gdrive") {
+    await gvReq({ action: "upload", name: name, mime: blob.type || "application/octet-stream", b64: await blobToB64(blob) });
+  } else {
+    await ghPut(name, blob);
+  }
+}
+async function txList() {
+  if (SYNC.mode === "gdrive") {
+    const j = await gvReq({ action: "list" });
+    return (j.files || []).map(f => ({ name: f.name, key: f.id, size: f.size }));
+  }
+  const arr = await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + SYNC.ghDir);
+  if (!Array.isArray(arr)) throw new Error("フォルダがまだありません");
+  return arr.filter(f => f.type === "file").map(f => ({ name: f.name, key: f.download_url, size: f.size }));
+}
+async function txGet(item) {
+  if (SYNC.mode === "gdrive") {
+    const j = await gvReq({ action: "get", id: item.key });
+    return b64ToBlob(j.b64, j.mime);
+  }
+  const r = await fetch(item.key);
+  if (!r.ok) throw new Error("取得失敗 " + r.status);
+  return r.blob();
+}
+async function txPing() {
+  if (SYNC.mode === "gdrive") {
+    const j = await gvReq({ action: "ping" });
+    return "ドライブ接続OK（フォルダ: " + (j.folder || "vocal-takes") + "）";
+  }
+  const j = await ghReq("/repos/" + SYNC.ghRepo);
+  return "GitHub接続OK：" + j.full_name + "（" + (j.private ? "非公開" : "⚠公開") + "）";
+}
+
+/* --- アップロード／読み込み --- */
+async function syncUploadTake(rec) {
+  if (!syncReady()) return false;
   try {
-    await ghPut(rec.name, rec.blob);
+    await txUpload(rec.name, rec.blob);
     if (rec.logJson && rec.logJson.frames && rec.logJson.frames.length) {
-      await ghPut(rec.base + "_pitchlog.json", new Blob([JSON.stringify(rec.logJson)], { type: "application/json" }));
+      await txUpload(rec.base + "_pitchlog.json", new Blob([JSON.stringify(rec.logJson)], { type: "application/json" }));
     }
     rec.uploaded = true;
     renderList();
     return true;
   } catch (e) {
-    showWarn("GitHubへのアップロードに失敗：" + e.message);
+    showWarn("バックアップに失敗：" + e.message);
     return false;
   }
 }
-async function ghPull() {
-  if (!GH.token) return 0;
+async function syncPull() {
   let list;
-  try { list = await ghReq("/repos/" + GH.repo + "/contents/" + GH.dir); }
-  catch (e) { return 0; }
-  if (!Array.isArray(list)) return 0;
+  try { list = await txList(); } catch (e) { return -1; }
   const local = new Set(items.map(it => it.name));
   const logs = new Map();
-  for (const f of list) if (f.name.endsWith("_pitchlog.json")) logs.set(f.name.replace(/_pitchlog\.json$/i, ""), f.download_url);
+  list.forEach(f => { if (/_pitchlog\.json$/i.test(f.name)) logs.set(f.name.replace(/_pitchlog\.json$/i, ""), f); });
   let added = 0;
   for (const f of list) {
-    if (!f.download_url || f.name.endsWith(".json") || local.has(decodeURIComponent(f.name))) continue;
+    if (/_pitchlog\.json$/i.test(f.name)) continue;
+    if (local.has(f.name)) continue;
     try {
-      const r = await fetch(f.download_url);
-      if (!r.ok) continue;
-      const blob = await r.blob();
+      const blob = await txGet(f);
       const base = f.name.replace(/\.[^.]+$/, "");
       let logJson = null;
       if (logs.has(base)) {
-        try { logJson = await (await fetch(logs.get(base))).json(); } catch (e) {}
+        try { logJson = JSON.parse(await (await txGet(logs.get(base))).text()); } catch (e) {}
       }
       const summary = logJson && logJson.frames ? buildSummary(logJson.frames) : {};
-      const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob, url: URL.createObjectURL(blob),
-        log: [], summary, fmt: "sync", name: f.name, base, logJson: logJson || { version: 2, frames: [] },
-        check: null, partial: false, uploaded: true };
+      const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: blob, url: URL.createObjectURL(blob),
+        log: [], summary: summary, fmt: "sync", name: f.name, base: base,
+        logJson: logJson || { version: 2, frames: [] }, check: null, partial: false, uploaded: true };
       items.push(rec); renderList(); added++;
       await dbPut(rec);
       checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
@@ -806,45 +879,59 @@ async function ghPull() {
   return added;
 }
 
-function ghRender() {
-  const r = $("ghRepo"), d = $("ghDir"), t = $("ghToken"), a = $("ghAuto");
-  if (!r) return;
-  r.value = GH.repo; d.value = GH.dir; t.value = GH.token; a.checked = GH.auto;
+function syncRenderFields() {
+  const modesel = $("syncMode");
+  if (!modesel) return;
+  modesel.value = SYNC.mode;
+  $("gvUrl").value = SYNC.gvUrl; $("gvSecret").value = SYNC.gvSecret;
+  $("ghRepo").value = SYNC.ghRepo; $("ghDir").value = SYNC.ghDir; $("ghToken").value = SYNC.ghToken;
+  $("syncAuto").checked = SYNC.auto;
+  $("gvBox").style.display = SYNC.mode === "gdrive" ? "block" : "none";
+  $("ghBox").style.display = SYNC.mode === "github" ? "block" : "none";
 }
+function syncReadFields() {
+  SYNC.mode = $("syncMode").value;
+  SYNC.gvUrl = $("gvUrl").value.trim();
+  SYNC.gvSecret = $("gvSecret").value.trim();
+  SYNC.ghRepo = $("ghRepo").value.trim() || SYNC.ghRepo;
+  SYNC.ghDir = ($("ghDir").value.trim() || "takes").replace(/^\/+|\/+$/g, "");
+  SYNC.ghToken = $("ghToken").value.trim();
+  SYNC.auto = $("syncAuto").checked;
+  syncSaveCfg();
+}
+$("syncMode").onchange = () => { syncReadFields(); syncRenderFields(); };
 $("ghToggle").onclick = () => {
   const body = $("ghBody");
   const open = body.style.display === "none";
   body.style.display = open ? "block" : "none";
   $("ghToggle").textContent = open ? "設定を閉じる" : "設定を開く";
-  if (open) ghRender();
+  if (open) syncRenderFields();
 };
-$("ghSave").onclick = () => {
-  GH.repo = $("ghRepo").value.trim() || GH.repo;
-  GH.dir = ($("ghDir").value.trim() || "takes").replace(/^\/+|\/+$/g, "");
-  GH.token = $("ghToken").value.trim();
-  GH.auto = $("ghAuto").checked;
-  ghSave();
-  ghMsg("保存しました（リポジトリ: " + GH.repo + " / 自動: " + (GH.auto ? "ON" : "OFF") + "）", "#3ddc84");
+$("syncSave").onclick = () => {
+  syncReadFields(); syncRenderFields();
+  syncMsg("保存しました（保存先: " + (SYNC.mode === "gdrive" ? "Google ドライブ" : "GitHub") +
+    " / 自動: " + (SYNC.auto ? "ON" : "OFF") + "）", "#3ddc84");
 };
-$("ghTest").onclick = async () => {
-  GH.token = $("ghToken").value.trim(); GH.repo = $("ghRepo").value.trim() || GH.repo;
-  if (!GH.token) { ghMsg("トークンを入れてください", "#d7a13b"); return; }
-  ghMsg("確認中…");
-  try {
-    const j = await ghReq("/repos/" + GH.repo);
-    ghMsg("接続OK：" + j.full_name + "（" + (j.private ? "非公開" : "⚠公開") + "）", j.private ? "#3ddc84" : "#d7a13b");
-  } catch (e) { ghMsg("接続できません：" + e.message, "#e06c6c"); }
+$("syncTest").onclick = async () => {
+  syncReadFields();
+  syncMsg("確認中…");
+  try { syncMsg(await txPing(), "#3ddc84"); }
+  catch (e) { syncMsg("接続できません：" + e.message, "#e06c6c"); }
 };
-$("ghSync").onclick = async () => {
-  ghMsg("同期中…");
+$("syncNow").onclick = async () => {
+  syncReadFields();
+  syncMsg("同期中…");
   let up = 0;
-  for (const it of items) if (!it.uploaded && it.blob) { if (await ghUploadTake(it)) up++; }
-  const down = await ghPull();
-  ghMsg("完了：アップロード " + up + "本／読み込み " + down + "本", "#3ddc84");
+  for (const it of items) if (!it.uploaded && it.blob) { if (await syncUploadTake(it)) up++; }
+  const down = await syncPull();
+  if (down < 0) { syncMsg("読み込みに失敗しました（設定を確認）", "#e06c6c"); return; }
+  syncMsg("完了：アップロード " + up + "本／読み込み " + down + "本", "#3ddc84");
 };
-$("ghForget").onclick = () => {
-  GH.token = ""; $("ghToken").value = ""; ghSave();
-  ghMsg("この端末からトークンを消しました", "#d7a13b");
+$("syncForget").onclick = () => {
+  SYNC.gvSecret = ""; SYNC.ghToken = ""; SYNC.auto = false;
+  $("gvSecret").value = ""; $("ghToken").value = ""; $("syncAuto").checked = false;
+  syncSaveCfg();
+  syncMsg("この端末から合言葉・トークンを消しました", "#d7a13b");
 };
 
 $("importBtn").onclick = () => $("importFile").click();
@@ -979,7 +1066,7 @@ function stopRecording() {
       if (!ok) showWarn("端末内に保存できませんでした（空き容量不足かも）。この録音は「音声」ボタンでDLして残してください。");
     });
     checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); rec._chk = chk;
-      if (GH.auto && GH.token) ghUploadTake(rec);
+      if (syncReady()) syncUploadTake(rec);
     });
   };
 
@@ -1268,8 +1355,8 @@ $("startBtn").onclick = async () => {
     $("main").style.display = "block";
     renderChips();
     wireTargetTools();
-    ghLoad();
-    if (GH.auto && GH.token) { ghMsg("自動同期ON：GitHubから読み込み中…"); ghPull().then(n => { if (n) ghMsg(n + "本を読み込みました", "#3ddc84"); }); }
+    syncLoad();
+    if (syncReady()) { syncMsg("自動同期ON：読み込み中…"); syncPull().then(n => { if (n > 0) syncMsg(n + "本を読み込みました", "#3ddc84"); }); }
     if (detectTimer) clearInterval(detectTimer);
     detectTimer = setInterval(pitchTick, 20);
     drawTick();
