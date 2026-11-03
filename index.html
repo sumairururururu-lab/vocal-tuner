@@ -658,21 +658,7 @@ function renderList() {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     };
-    div.querySelector(".del").onclick = async () => {
-      const msg = it.uploaded
-        ? "この録音を削除します。\nGitHub（バックアップ）からも消します。\nよろしいですか？"
-        : "この録音を削除します。よろしいですか？";
-      if (!confirm(msg)) return;
-      if (it.url) URL.revokeObjectURL(it.url);
-      const i = items.indexOf(it);
-      if (i >= 0) items.splice(i, 1);
-      renderList();
-      await dbDel(it.id);
-      if (it.uploaded) {
-        const n = await deleteCloudTake(it);
-        if (!n) showWarn("端末からは消しましたが、バックアップ側を消せませんでした（設定を確認）");
-      }
-    };
+    div.querySelector(".del").onclick = () => deleteTake(it);
     listEl.prepend(div);
   }
 }
@@ -974,6 +960,7 @@ async function syncPull() {
     for (const f of list) {
       if (/_pitchlog\.json$/i.test(f.name)) continue;
       if (local.has(f.name)) continue;
+      if (tombHas(f.name)) continue;
       try {
         const blob = await txGet(d, f);
         const base = f.name.replace(/\.[^.]+$/, "");
@@ -1003,6 +990,7 @@ async function syncPull() {
       const base = f.name.replace(/_pitchlog\.json$/i, "");
       if (basesWithAudio.has(base)) continue;
       if (items.some(it => it.base === base)) continue;
+      if (tombHas(f.name) || tombHas(base + ".webm")) continue;
       try {
         const logJson = JSON.parse(await (await txGet(d, f)).text());
         const summary = buildSummary(logJson.frames || []);
@@ -1169,21 +1157,61 @@ $("importFile").onchange = async (e) => {
 
 $("clearAll").onclick = async () => {
   if (!items.length) return;
-  if (!confirm("この端末に保存した録音を全部消します。OK？")) return;
-  const alsoCloud = confirm("GitHub（バックアップ）からも全部消しますか？\n\nOK＝バックアップも消す（元に戻せません）\nキャンセル＝この端末だけ消す");
-  const targets = [...items];
-  targets.forEach(it => URL.revokeObjectURL(it.url));
+  const alsoCloud = syncReady() && confirm("バックアップ先（GitHub／ドライブ）からも消しますか？\n\nOK＝両方から消す\nキャンセル＝この端末だけ消す");
+  if (!confirm((alsoCloud ? "この端末とバックアップ先の両方から" : "この端末から") + "全部消します。OK？")) return;
+  const list = items.slice();
+  list.forEach(it => { if (it.url) URL.revokeObjectURL(it.url); tombAdd(it.name); tombAdd(it.base + "_pitchlog.json"); });
   items.length = 0;
   renderList();
   await dbClear();
-  if (alsoCloud) {
-    let n = 0;
-    for (const it of targets) n += await deleteCloudTake(it);
-    showWarn("端末とバックアップから " + targets.length + "本を削除しました");
-  } else {
-    showWarn("この端末から削除しました（バックアップは残っています）");
-  }
+  if (alsoCloud) for (const it of list) { await deleteCloudFile(it.name); await deleteCloudFile(it.base + "_pitchlog.json"); }
 };
+
+// ================= 削除（この端末＋クラウドの両方） =================
+function tombLoad() {
+  try { return JSON.parse(localStorage.getItem("deleted_names") || "[]"); } catch (e) { return []; }
+}
+function tombAdd(name) {
+  const a = tombLoad().filter(n => n !== name);
+  a.push(name);
+  try { localStorage.setItem("deleted_names", JSON.stringify(a.slice(-1000))); } catch (e) {}
+}
+function tombHas(name) { return tombLoad().indexOf(name) >= 0; }
+async function deleteCloudFile(name) {
+  let ok = 0;
+  for (const d of SYNC.dests) {
+    if (!destReady(d)) continue;
+    try {
+      if (d.kind === "gdrive") {
+        const j = await gvReq(d, { action: "list" });
+        const hit = (j.files || []).find(f => f.name === name);
+        if (hit) { await gvReq(d, { action: "delete", id: hit.id }); ok++; }
+      } else {
+        const path = (d.dir || "takes") + "/" + encodeURIComponent(name);
+        const cur = await ghReq(d, "/repos/" + d.repo + "/contents/" + path);
+        await ghReq(d, "/repos/" + d.repo + "/contents/" + path, { method: "DELETE",
+          body: JSON.stringify({ message: "delete " + name, sha: cur.sha, branch: "main" }),
+          headers: { "Content-Type": "application/json" } });
+        ok++;
+      }
+    } catch (e) {}
+  }
+  return ok;
+}
+async function deleteTake(it) {
+  if (!confirm("この録音を削除します。\nこの端末と、バックアップ先（GitHub／ドライブ）の両方から消えます。よろしいですか？")) return;
+  tombAdd(it.name);
+  tombAdd(it.base + "_pitchlog.json");
+  if (it.url) { URL.revokeObjectURL(it.url); it.url = null; }
+  const i = items.indexOf(it);
+  if (i >= 0) items.splice(i, 1);
+  renderList();
+  await dbDel(it.id);
+  if (syncReady()) {
+    await deleteCloudFile(it.name);
+    await deleteCloudFile(it.base + "_pitchlog.json");
+  }
+}
 
 // ================= 音声だけ消す（音程の記録は残す） =================
 function takeTime(it) {
@@ -1191,38 +1219,26 @@ function takeTime(it) {
   if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
   return it.id || 0;
 }
-async function deleteCloudFile(d, fileName) {
-  try {
-    if (d.kind === "gdrive") {
-      const j = await gvReq(d, { action: "list" });
-      const hit = (j.files || []).find(f => f.name === fileName);
-      if (hit) { await gvReq(d, { action: "delete", id: hit.id }); return true; }
-      return false;
-    }
-    const path = (d.dir || "takes") + "/" + encodeURIComponent(fileName);
-    const cur = await ghReq(d, "/repos/" + d.repo + "/contents/" + path);
-    await ghReq(d, "/repos/" + d.repo + "/contents/" + path, { method: "DELETE",
-      body: JSON.stringify({ message: "delete: " + fileName, sha: cur.sha, branch: "main" }),
-      headers: { "Content-Type": "application/json" } });
-    return true;
-  } catch (e) { return false; }
-}
 async function deleteCloudAudio(name) {
   let ok = 0;
   for (const d of SYNC.dests) {
     if (!destReady(d)) continue;
-    if (await deleteCloudFile(d, name)) ok++;
+    try {
+      if (d.kind === "gdrive") {
+        const j = await gvReq(d, { action: "list" });
+        const hit = (j.files || []).find(f => f.name === name);
+        if (hit) { await gvReq(d, { action: "delete", id: hit.id }); ok++; }
+      } else {
+        const path = (d.dir || "takes") + "/" + encodeURIComponent(name);
+        const cur = await ghReq(d, "/repos/" + d.repo + "/contents/" + path);
+        await ghReq(d, "/repos/" + d.repo + "/contents/" + path, { method: "DELETE",
+          body: JSON.stringify({ message: "log only: " + name, sha: cur.sha, branch: "main" }),
+          headers: { "Content-Type": "application/json" } });
+        ok++;
+      }
+    } catch (e) {}
   }
   return ok;
-}
-async function deleteCloudTake(it) {
-  let n = 0;
-  for (const d of SYNC.dests) {
-    if (!destReady(d)) continue;
-    if (await deleteCloudFile(d, it.name)) n++;
-    if (it.base) await deleteCloudFile(d, it.base + "_pitchlog.json");
-  }
-  return n;
 }
 async function stripAudio(it, alsoCloud) {
   if (alsoCloud && it.uploaded && syncReady()) await deleteCloudAudio(it.name);
