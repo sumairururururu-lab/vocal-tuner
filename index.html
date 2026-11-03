@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.5</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.6</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -169,7 +169,11 @@
 
       <div class="list-panel">
         <div class="saved-note" id="savedNote">✔ 録音はこの端末のブラウザ内（IndexedDB）に自動保存されます。ページを再読み込みしても消えません。</div>
-        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="dlAll">全部DL</button><button id="clearAll">すべて削除</button></div>
+        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="importBtn">📥 読み込み</button><button id="shareAll">📤 全部共有</button><button id="dlAll">全部DL</button><button id="clearAll">すべて削除</button></div>
+        <input type="file" id="importFile" multiple accept="audio/*,video/mp4,.webm,.wav,.mp4,.m4a,.opus,.ogg,.json" style="display:none">
+        <div class="saved-note" style="background:#141c28;border-color:#22303f;color:#7f8d9f;">
+          べつの端末とやりとりするとき：<b>📤 全部共有</b> でGoogle Drive・LINEなどに送って、べつの端末で <b>📥 読み込み</b> を押してそのファイルを選ぶと、この一覧に戻ります（自動同期ではないので、手で運ぶ形）。
+        </div>
         <div id="list"><div class="empty">丸いボタンで録音すると、ここに一覧が表示されます。<br>各録音には音程ログが自動で付きます。</div></div>
       </div>
 
@@ -592,9 +596,11 @@ function renderList() {
       <audio controls preload="none" src="${it.url}"></audio>
       <div class="btns">
         <a href="${it.url}" download="${it.name}">音声DL</a>
+        <button class="share">📤 共有</button>
         <button class="log">音程ログDL (JSON)</button>
         <button class="del">削除</button>
       </div>`;
+    div.querySelector(".share").onclick = () => shareTakes([it]);
     div.querySelector(".log").onclick = () => {
       const blob = new Blob([JSON.stringify(it.logJson, null, 1)], { type: "application/json" });
       const a = document.createElement("a");
@@ -612,6 +618,79 @@ function renderList() {
     listEl.prepend(div);
   }
 }
+
+// ================= べつの端末へ運ぶ（共有／読み込み） =================
+async function shareTakes(list) {
+  try {
+    const files = list.map(it => {
+      const ext = (it.name.split(".").pop() || "webm").toLowerCase();
+      return new File([it.blob], it.name, { type: it.blob.type || "audio/" + ext });
+    });
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: "録音 " + files.length + "本" });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;   // ユーザーがキャンセル
+  }
+  // 共有が使えない端末ではダウンロードで代用
+  for (const it of list) {
+    const a = document.createElement("a");
+    a.href = it.url; a.download = it.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    await new Promise(r => setTimeout(r, 600));
+  }
+}
+
+$("shareAll").onclick = () => {
+  if (!items.length) { showWarn("共有する録音がありません"); return; }
+  shareTakes([...items].sort((a, b) => a.id - b.id));
+};
+
+async function importFiles(fileList) {
+  const files = [...fileList];
+  const logs = new Map();       // base名 -> logJson
+  const audios = [];
+  for (const f of files) {
+    const n = f.name.toLowerCase();
+    if (n.endsWith(".json")) {
+      try {
+        const j = JSON.parse(await f.text());
+        const base = f.name.replace(/_pitchlog\.json$/i, "").replace(/\.json$/i, "");
+        logs.set(base, j);
+      } catch (e) {}
+    } else {
+      audios.push(f);
+    }
+  }
+  let added = 0;
+  for (const f of audios) {
+    const base = f.name.replace(/\.[^.]+$/, "");
+    const dup = items.some(it => it.name === f.name && it.blob && Math.abs(it.blob.size - f.size) < 64);
+    if (dup) continue;
+    const url = URL.createObjectURL(f);
+    const logJson = logs.get(base) || null;
+    const summary = logJson && logJson.frames ? buildSummary(logJson.frames.map(e => [e[0], e[1], e[2], e[3]])) : {};
+    const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: f, url, log: [],
+      summary, fmt: "import", name: uniqueName(base, (f.name.split(".").pop() || "webm")), base,
+      logJson: logJson || { version: 2, imported: true, frames: [] }, check: null, partial: false };
+    items.push(rec);
+    renderList();
+    added++;
+    const ok = await dbPut(rec);
+    if (!ok) showWarn("端末内に保存できませんでした（空き容量不足かも）");
+    checkTake(f).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
+  }
+  if (!added) showWarn("読み込める音声が見つかりませんでした（すでにある録音かも）");
+  else $("savedNote").textContent = "📥 " + added + "本を読み込みました（この端末に保存済み）";
+}
+
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async (e) => {
+  const fl = e.target.files;
+  if (fl && fl.length) await importFiles(fl);
+  e.target.value = "";
+};
 
 $("clearAll").onclick = async () => {
   if (!items.length) return;
