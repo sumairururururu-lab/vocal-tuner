@@ -107,7 +107,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.7</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.8</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -1309,10 +1309,12 @@ $("dlAll").onclick = async () => {
 prefsLoad();
 
 // 画面に戻ってきたときに自動で同期（他の端末で録った分が降りてくる）
-let pulling = false;
-document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState !== "visible") return;
+let pulling = false, lastPullTry = 0;
+async function autoPullOnReturn() {
+  if (document.visibilityState === "hidden") return;
   if (recording || pulling) return;
+  if (Date.now() - lastPullTry < 5000) return;   // 連続では走らせない
+  lastPullTry = Date.now();
   if (!SYNC.dests.length) syncLoad();
   if (!syncReady()) return;
   pulling = true;
@@ -1321,7 +1323,10 @@ document.addEventListener("visibilitychange", async () => {
     if (n > 0) syncMsg(n + "本を読み込みました", "#3ddc84");
   } catch (e) {}
   pulling = false;
-});
+}
+document.addEventListener("visibilitychange", autoPullOnReturn);   // アプリ切替・タスクボタン
+window.addEventListener("focus", autoPullOnReturn);                // ウィンドウに戻ったとき
+window.addEventListener("pageshow", autoPullOnReturn);             // 戻る操作・復帰したとき
 
 // 再読み込み・タブを閉じたときに、保存済みの録音を復元
 (async function restoreSaved() {
