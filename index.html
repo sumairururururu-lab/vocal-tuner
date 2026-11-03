@@ -107,7 +107,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.6</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.7</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -1307,6 +1307,21 @@ $("dlAll").onclick = async () => {
 };
 
 prefsLoad();
+
+// 画面に戻ってきたときに自動で同期（他の端末で録った分が降りてくる）
+let pulling = false;
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible") return;
+  if (recording || pulling) return;
+  if (!SYNC.dests.length) syncLoad();
+  if (!syncReady()) return;
+  pulling = true;
+  try {
+    const n = await syncPull();
+    if (n > 0) syncMsg(n + "本を読み込みました", "#3ddc84");
+  } catch (e) {}
+  pulling = false;
+});
 
 // 再読み込み・タブを閉じたときに、保存済みの録音を復元
 (async function restoreSaved() {
