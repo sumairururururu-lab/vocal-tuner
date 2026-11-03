@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.0</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.1</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -421,7 +421,8 @@ async function dbPut(rec) {
       const tx = db.transaction(DB_STORE, "readwrite");
       tx.objectStore(DB_STORE).put({ id: rec.id, name: rec.name, base: rec.base, fmt: rec.fmt,
         blob: rec.blob || null, summary: rec.summary, logJson: rec.logJson, check: rec.check || null,
-        partial: !!rec.partial, audioRemoved: !!rec.audioRemoved, savedAt: Date.now() });
+        partial: !!rec.partial, audioRemoved: !!rec.audioRemoved, uploaded: !!rec.uploaded,
+        savedAt: Date.now() });
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
     });
@@ -608,7 +609,19 @@ function buildSummary(log) {
   };
 }
 
+function dedupeItems() {
+  const seen = new Map();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const k = it.name;
+    if (!seen.has(k)) { seen.set(k, i); continue; }
+    const j = seen.get(k);
+    if (!items[j].blob && it.blob) { items[j] = it; }   // 音声があるほうを残す
+    items.splice(i, 1); i--;
+  }
+}
 function renderList() {
+  dedupeItems();
   const totalBytes = items.reduce((a, it) => a + (it.blob ? it.blob.size : 0), 0);
   cntEl.textContent = "録音一覧 " + items.length + (items.length ? "（" + humanSize(totalBytes) + "・端末に保存済み）" : "");
   if (!items.length) {
@@ -664,10 +677,12 @@ function renderList() {
     const reupBtn = div.querySelector(".reup");
     if (reupBtn) reupBtn.onclick = async () => {
       if (!syncReady()) { showWarn("同期の設定（トークン／☑自動）を確認してください"); return; }
-      reupBtn.textContent = "☁ アップ中…";
-      const ok = await syncUploadTake(it);
-      reupBtn.textContent = ok ? "☁↻ もう一度アップ" : "☁↻ もう一度アップ";
-      if (ok) showWarn("この録音をバックアップ先に再アップロードしました");
+      reupBtn.textContent = "☁ 確認中…";
+      const r = await syncUploadTake(it);
+      reupBtn.textContent = "☁↻ もう一度アップ";
+      if (r === "exists") showWarn("☁ この録音は既にアップ済みです（何もしませんでした）");
+      else if (r === true) showWarn("☁ 再アップロードしました（同じ名前なので上書き）");
+      else showWarn("アップロードできませんでした");
     };
     div.querySelector(".log").onclick = () => {
       const blob = new Blob([JSON.stringify(it.logJson, null, 1)], { type: "application/json" });
@@ -966,10 +981,22 @@ async function pickDest() {
 }
 
 /* --- アップロード --- */
-async function syncUploadTake(rec) {
+async function existsIn(d, name) {
+  try {
+    const list = await txList(d);
+    return list.some(f => f.name === name);
+  } catch (e) { return false; }
+}
+async function syncUploadTake(rec, force) {
   if (!syncReady()) return false;
   const d = await pickDest();
   if (!d) { showWarn("保存先がいっぱいです（設定で保存先を追加してください）"); return false; }
+  if (!force && await existsIn(d, rec.name)) {   // 既にアップ済み
+    rec.uploaded = true;
+    renderList();
+    dbPut(rec);
+    return "exists";
+  }
   try {
     await txUpload(d, rec.name, rec.blob);
     if (rec.logJson && rec.logJson.frames && rec.logJson.frames.length) {
@@ -1354,7 +1381,7 @@ window.addEventListener("pageshow", autoPullOnReturn);             // 戻る操�
     if (!r.blob && !r.audioRemoved) continue;
     if (r.name) usedNames.add(r.name);
     items.push({ id: r.id, blob: r.blob || null, url: r.blob ? URL.createObjectURL(r.blob) : null, log: [],
-      audioRemoved: !!r.audioRemoved,
+      audioRemoved: !!r.audioRemoved, uploaded: !!r.uploaded,
       summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
       check: r.check || null, partial: !!r.partial });
   }
