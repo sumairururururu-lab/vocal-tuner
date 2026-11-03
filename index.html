@@ -107,7 +107,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.4</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.5</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -190,6 +190,7 @@
             <label><input type="checkbox" id="ghAutoAdd"> GitHubに自動で追加（いっぱいになったら次のリポジトリを作る）</label>
             <label>名前の元 <input id="ghPrefix" type="text" placeholder="vocal-takes" style="width:110px;"></label>
             <label>1個の上限 <input id="ghMaxMB" type="number" min="50" max="2000" step="50" style="width:70px;">MB</label>
+            <span style="font-size:11px;color:#5b6b80;">（GitHubは1GB超で警告／5GB級で止まるので、500MBで早めに次へ移します。小さくしても総容量は減りません）</span>
           </div>
           <div id="ghMsg" style="font-size:11px;color:#7f8d9f;margin-top:6px;line-height:1.6;">
             保存先は6個まで。1つがいっぱいになると、自動で次の保存先に切りかえて保存します。合言葉／トークンはこの端末にだけ保存されます。
@@ -731,7 +732,8 @@ async function importFiles(fileList) {
 }
 
 // ================= 同期（複数の保存先・自動お引っ越し） =================
-const SYNC = { dests: [], active: 0, auto: false, ghAuto: false, ghPrefix: "vocal-takes", ghMaxMB: 500 };
+const SYNC = { dests: [], active: 0, auto: false, ghAuto: false, ghPrefix: "vocal-takes", ghMaxMB: 500,
+               ghOwner: "", ghLastRepo: "" };
 function ghFullKB() { return (SYNC.ghMaxMB || 500) * 1024; }   // 1リポジトリの上限(MB)
 const MAX_DESTS = 6;
 
@@ -745,6 +747,8 @@ function syncLoad() {
       SYNC.ghAuto = !!j.ghAuto;
       if (j.ghPrefix) SYNC.ghPrefix = j.ghPrefix;
       if (j.ghMaxMB) SYNC.ghMaxMB = j.ghMaxMB;
+      if (j.ghOwner) SYNC.ghOwner = j.ghOwner;
+      if (j.ghLastRepo) SYNC.ghLastRepo = j.ghLastRepo;
     } else {
       const old = JSON.parse(localStorage.getItem("sync_cfg") || "null");
       if (old && old.mode === "gdrive" && old.gvUrl) {
@@ -761,7 +765,8 @@ function syncLoad() {
 }
 function syncSaveCfg() {
   try { localStorage.setItem("sync_cfg2", JSON.stringify({ dests: SYNC.dests, active: SYNC.active, auto: SYNC.auto,
-    ghAuto: SYNC.ghAuto, ghPrefix: SYNC.ghPrefix, ghMaxMB: SYNC.ghMaxMB })); } catch (e) {}
+    ghAuto: SYNC.ghAuto, ghPrefix: SYNC.ghPrefix, ghMaxMB: SYNC.ghMaxMB,
+    ghOwner: SYNC.ghOwner, ghLastRepo: SYNC.ghLastRepo })); } catch (e) {}
 }
 function destReady(d) {
   return d.kind === "gdrive" ? !!(d.url && d.secret) : !!(d.token && d.repo);
@@ -803,6 +808,20 @@ async function gvReq(d, payload) {
 }
 
 /* --- GitHub --- */
+async function ensureRepoOwner(d) {
+  if (!d || d.kind !== "github") return d;
+  if (!d.repo) return d;
+  if (d.repo.indexOf("/") >= 0) { SYNC.ghLastRepo = d.repo; return d; }
+  if (!SYNC.ghOwner) {
+    try { const u = await ghReq(d, "/user"); SYNC.ghOwner = u.login || ""; } catch (e) { return d; }
+  }
+  if (!SYNC.ghOwner) return d;
+  d.repo = SYNC.ghOwner + "/" + d.repo;
+  SYNC.ghLastRepo = d.repo;
+  syncSaveCfg();
+  renderDests();
+  return d;
+}
 async function ghReq(d, path, opts) {
   opts = opts || {};
   const r = await fetch("https://api.github.com" + path, {
@@ -902,6 +921,7 @@ async function pickDest() {
       } catch (e) { continue; }
     } else {
       try {
+        await ensureRepoOwner(d);
         const j = await ghReq(d, "/repos/" + d.repo);
         d.sizeKB = j.size || 0;
         if (d.sizeKB > ghFullKB()) { d.archived = true; syncMsg("「" + d.name + "」は容量が近いので次の保存先へ", "#d7a13b"); continue; }
@@ -952,6 +972,7 @@ async function syncPull() {
   let added = 0, tried = 0;
   for (const d of SYNC.dests) {
     if (!destReady(d)) continue;
+    await ensureRepoOwner(d);
     let list;
     try { list = await txList(d); } catch (e) { continue; }
     tried++;
@@ -1099,7 +1120,8 @@ $("destAddGv").onclick = () => {
 };
 $("destAddGh").onclick = () => {
   if (SYNC.dests.length >= MAX_DESTS) { syncMsg("手で足せる保存先は" + MAX_DESTS + "個までです", "#d7a13b"); return; }
-  SYNC.dests.push({ kind: "github", name: "GitHub", repo: SYNC.ghPrefix || "vocal-takes", dir: "takes", token: "" });
+  const defRepo = SYNC.ghLastRepo || ((SYNC.ghOwner ? SYNC.ghOwner + "/" : "") + (SYNC.ghPrefix || "vocal-takes"));
+  SYNC.dests.push({ kind: "github", name: "GitHub", repo: defRepo, dir: "takes", token: "" });
   syncSaveCfg(); renderDests(); syncMsg("GitHubを足しました（リポジトリ名とトークンを入れてください）", "#3ddc84");
 };
 $("ghToggle").onclick = () => {
@@ -1125,7 +1147,9 @@ $("syncTest").onclick = async () => {
         const q = await txQuota(d);
         lines.push((i + 1) + "．OK 残り" + (q.free === null ? "?" : gb(q.free)));
       } else {
+        await ensureRepoOwner(d);
         const j = await ghReq(d, "/repos/" + d.repo);
+        SYNC.ghLastRepo = j.full_name; syncSaveCfg();
         lines.push((i + 1) + "．OK " + j.full_name + (j.private ? "（非公開）" : "（⚠公開）"));
       }
     } catch (e) { lines.push((i + 1) + "．× " + e.message.slice(0, 40)); }
