@@ -670,6 +670,7 @@ function stopRecording() {
       version: 2,
       recorded_at: new Date().toISOString(),
       song: song || null,
+      mic_agc: !!($("agc") && $("agc").checked),
       duration_s: +dur.toFixed(2),
       sample_rate: audioCtx.sampleRate,
       note: "frames: [t_sec, midi, cents, clarity] — midi null = 音声なし",
