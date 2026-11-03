@@ -74,7 +74,10 @@
   .list-panel { background: var(--panel); border: 1px solid #232a35; border-radius: 18px; padding: 12px 14px; }
   .list-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .list-head span { font-size: 13px; font-weight: 700; color: var(--dim); }
-  .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; }
+  .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; padding: 2px 4px; }
+  .list-head button:hover { color: #cfd8e6; }
+  .saved-note { font-size: 11px; line-height: 1.5; color: #4f9d6b; background: #16241c; border: 1px solid #21382a;
+    border-radius: 10px; padding: 7px 10px; margin-bottom: 8px; }
   .empty { font-size: 13px; color: #5b6b80; text-align: center; padding: 12px 0; }
   .item { border-top: 1px solid #232a35; padding: 10px 0; }
   .item .title { font-size: 13px; font-weight: 700; margin-bottom: 2px; display: flex; justify-content: space-between; align-items: center; }
@@ -127,14 +130,16 @@
       </div>
 
       <div class="list-panel">
-        <div class="list-head"><span id="cnt">録音一覧 0</span><button id="clearAll">すべて削除</button></div>
+        <div class="saved-note" id="savedNote">✔ 録音はこの端末のブラウザ内（IndexedDB）に自動保存されます。ページを再読み込みしても消えません。</div>
+        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="dlAll">全部DL</button><button id="clearAll">すべて削除</button></div>
         <div id="list"><div class="empty">丸いボタンで録音すると、ここに一覧が表示されます。<br>各録音には音程ログが自動で付きます。</div></div>
       </div>
 
       <div class="hint">
         🟢 中央のゾーン = 合ってる（±15セント）<br>
         録音すると音程ログ（JSON）も保存されます → 「音程ログ」ボタンでDLして分析にどうぞ<br>
-        ブラウザを閉じると消えるので、残したい録音は「音声」をダウンロードしてね<br><br>
+        録音は端末のブラウザ内に自動保存されます（リロードしても消えません）。<br>
+        別の端末や分析用に残したいときは「全部DL」でまとめてダウンロードしてね<br><br>
         🎵 録音いらずのチューナーだけがほしい → <a href="tuner.html" style="color:#7ab0ff;">チューナー単体版</a>
       </div>
     </div>
@@ -266,6 +271,71 @@ let pitchLog = [], lastLogT = 0, timerRaf = null;
 let smoothMidi = null;
 const items = []; // {id, blob, url, log, summary, fmt, name}
 
+// ================= 端末内保存（リロードしても消えない） =================
+const DB_NAME = "recorder_tuner_db", DB_STORE = "takes";
+function dbOpen() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: "id" });
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function dbPut(rec) {
+  try {
+    const db = await dbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).put({ id: rec.id, name: rec.name, base: rec.base, fmt: rec.fmt,
+        blob: rec.blob, summary: rec.summary, logJson: rec.logJson, savedAt: Date.now() });
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+    return true;
+  } catch (e) {
+    console.warn("端末内保存に失敗", e);
+    return false;
+  }
+}
+async function dbGetAll() {
+  try {
+    const db = await dbOpen();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(DB_STORE, "readonly");
+      const rq = tx.objectStore(DB_STORE).getAll();
+      rq.onsuccess = () => res(rq.result || []);
+      rq.onerror = () => rej(rq.error);
+    });
+  } catch (e) { console.warn("読み出しに失敗", e); return []; }
+}
+async function dbDel(id) {
+  try {
+    const db = await dbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).delete(id);
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  } catch (e) {}
+}
+async function dbClear() {
+  try {
+    const db = await dbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).clear();
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  } catch (e) {}
+}
+function humanSize(bytes) {
+  if (bytes > 1024 * 1024) return (bytes / 1048576).toFixed(1) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
 function fmtTime(sec) {
   const m = Math.floor(sec / 60), s = sec - m * 60;
   return m + ":" + (s < 10 ? "0" : "") + s.toFixed(1);
@@ -293,7 +363,8 @@ function buildSummary(log) {
 }
 
 function renderList() {
-  cntEl.textContent = "録音一覧 " + items.length;
+  const totalBytes = items.reduce((a, it) => a + (it.blob ? it.blob.size : 0), 0);
+  cntEl.textContent = "録音一覧 " + items.length + (items.length ? "（" + humanSize(totalBytes) + "・端末に保存済み）" : "");
   if (!items.length) {
     listEl.innerHTML = '<div class="empty">丸いボタンで録音すると、ここに一覧が表示されます。<br>各録音には音程ログが自動で付きます。</div>';
     return;
@@ -327,12 +398,51 @@ function renderList() {
       URL.revokeObjectURL(it.url);
       items.splice(items.indexOf(it), 1);
       renderList();
+      dbDel(it.id);
     };
     listEl.prepend(div);
   }
 }
 
-$("clearAll").onclick = () => { items.forEach(it => URL.revokeObjectURL(it.url)); items.length = 0; renderList(); };
+$("clearAll").onclick = async () => {
+  if (!items.length) return;
+  if (!confirm("この端末に保存した録音を全部消します。OK？")) return;
+  items.forEach(it => URL.revokeObjectURL(it.url));
+  items.length = 0;
+  renderList();
+  await dbClear();
+};
+
+$("dlAll").onclick = async () => {
+  if (!items.length) return;
+  const list = [...items].sort((a, b) => a.id - b.id);
+  for (const it of list) {
+    const a = document.createElement("a");
+    a.href = it.url;
+    a.download = it.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    await new Promise(r => setTimeout(r, 700)); // 連続DLで止められるのを避ける
+  }
+};
+
+// 再読み込み・タブを閉じたときに、保存済みの録音を復元
+(async function restoreSaved() {
+  const recs = await dbGetAll();
+  recs.sort((a, b) => a.id - b.id);
+  for (const r of recs) {
+    if (!r.blob) continue;
+    items.push({ id: r.id, blob: r.blob, url: URL.createObjectURL(r.blob), log: [],
+      summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson });
+  }
+  renderList();
+})();
+
+// 録音中にリロード・閉じる操作をしたら警告
+window.addEventListener("beforeunload", e => {
+  if (recording) { e.preventDefault(); e.returnValue = "録音中です。止めてから移動してね"; return e.returnValue; }
+});
 
 function startRecording() {
   const fmt = document.querySelector('input[name="fmt"]:checked').value;
@@ -396,8 +506,16 @@ function stopRecording() {
       summary,
       frames: pitchLog.map(e => [+e[0].toFixed(2), e[1] === null ? null : +e[1].toFixed(3), e[1] === null ? null : +e[2], +(e[3] || 0).toFixed(2)]),
     };
-    items.push({ id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: base + "." + ext, base, logJson });
+    const rec = { id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: base + "." + ext, base, logJson };
+    items.push(rec);
     renderList();
+    dbPut(rec).then(ok => {  // 端末内に保存（リロードしても残る）
+      if (!ok) {
+        const n = $("savedNote");
+        n.style.color = "#ff8f8f"; n.style.background = "#2a1717"; n.style.borderColor = "#4a2323";
+        n.textContent = "⚠ 端末内に保存できませんでした（空き容量不足かも）。この録音は「音声」ボタンでDLして残してください。";
+      }
+    });
   };
 
   if (fmt === "wav") {
