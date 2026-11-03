@@ -102,7 +102,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.2</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.3</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -139,6 +139,10 @@
         <div class="fmt">
           <label style="gap:6px;">曲名 <input id="songName" type="text" placeholder="例: 時ノ雨（任意）" autocomplete="off"></label>
         </div>
+        <div class="fmt">
+          <label style="gap:6px;" title="スマホのマイクは自動ゲインが切られていると極端に小さいことがあります">
+            <input type="checkbox" id="agc"> マイクを自動で大きくする（小声でも反応）</label>
+        </div>
         <div class="meter-wrap">
           <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
           <div class="meter-txt" id="meterTxt">入力 –</div>
@@ -158,6 +162,7 @@
         録音は端末のブラウザ内に自動保存されます（リロードしても消えません）。<br>
         録音後は自動で「長さ・ピーク・無音率」をチェックします（✖や△が出たら録り直し）。<br>
         曲名を入れておくとファイル名に入って、あとで分析しやすいです<br>
+        マイクは口から**10〜15cm**。小さくて反応しないときは「マイクを自動で大きくする」をON<br>
         別の端末や分析用に残したいときは「全部DL」でまとめてダウンロードしてね<br><br>
         🎵 録音いらずのチューナーだけがほしい → <a href="tuner.html" style="color:#7ab0ff;">チューナー単体版</a>
       </div>
@@ -175,7 +180,7 @@ function detectPitch(buf, sampleRate) {
   if (tauMax <= tauMin) return null;
   let energy = 0;
   for (let i = 0; i < buf.length; i++) energy += buf[i] * buf[i];
-  if (Math.sqrt(energy / buf.length) < 0.005) return null;   // 小さい声も拾う（旧0.012は小声を落としすぎ）
+  if (Math.sqrt(energy / buf.length) < 0.006) return null;   // 正規化後のバッファを想定
   const d = new Float32Array(tauMax + 1);
   for (let tau = tauMin; tau <= tauMax; tau++) {
     let sum = 0;
@@ -207,7 +212,7 @@ function detectPitch(buf, sampleRate) {
   const f0 = sampleRate / betterTau;
   if (f0 < 65 || f0 > 1250) return null;
   const clarity = 1 - dPrime[tauEst];
-  if (clarity < 0.55) return null;
+  if (clarity < 0.5) return null;
   return { f0, clarity };
 }
 
@@ -783,17 +788,26 @@ function dbgUpdate(det, rms) {
   const lv = dB > -99 ? Math.round(dB) + "dB" : "–";
   dbgEl.textContent = det
     ? `入力 ${lv} ・ 検出 ${det.f0.toFixed(0)}Hz ・ 確度 ${det.clarity.toFixed(2)}`
-    : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づくか、もっと大きく）" : "");
+    : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づく／下の「自動で大きく」をON）" : "");
   dbgEl.style.color = det ? "#4f9d6b" : "#d7a13b";
 }
 
+let normBuf = null;
 function pitchTick() {
   if (analyser) {
     analyser.getFloatTimeDomainData(anBuf);
     let e = 0;
     for (let i = 0; i < anBuf.length; i++) e += anBuf[i] * anBuf[i];
     const rmsIn = Math.sqrt(e / anBuf.length);
-    const det = detectPitch(anBuf, audioCtx.sampleRate);
+    // 検出用に音量を正規化（小さい声でも同じように判定する。録音音声には影響なし）
+    if (!normBuf || normBuf.length !== anBuf.length) normBuf = new Float32Array(anBuf.length);
+    if (rmsIn > 0.0012) {
+      const g = Math.min(30, 0.06 / rmsIn);
+      for (let i = 0; i < anBuf.length; i++) normBuf[i] = anBuf[i] * g;
+    } else {
+      normBuf.fill(0);
+    }
+    const det = detectPitch(normBuf, audioCtx.sampleRate);
     const now = performance.now();
     const tSec = recording ? (now - recStart) / 1000 : 0;
 
@@ -864,21 +878,48 @@ async function diagnose() {
   errEl.innerHTML = msgs.join("<br>");
 }
 
+function micConstraints() {
+  const agc = $("agc") && $("agc").checked;
+  return { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: !!agc } };
+}
+
+async function reconnectMic() {
+  if (recording) { showWarn("録音中はマイク設定を変えられません。止めてから切り替えてね"); return; }
+  try {
+    if (micStream) micStream.getTracks().forEach(t => t.stop());
+    micStream = await navigator.mediaDevices.getUserMedia(micConstraints());
+    try { micSource.disconnect(); } catch (e) {}
+    micSource = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 4096;
+    micSource.connect(analyser);
+    anBuf = new Float32Array(analyser.fftSize);
+    attachMicWatch();
+    $("savedNote").textContent = "🎚 マイク設定を切り替えました（自動ゲイン " + ($("agc").checked ? "ON" : "OFF") + "）";
+  } catch (e) {
+    showWarn("マイクの再設定に失敗しました");
+  }
+}
+
+function attachMicWatch() {
+  micStream.getAudioTracks().forEach(tr => {
+    tr.addEventListener("ended", () => { if (recording) showWarn("マイクが切断されました。録音を止めて開始し直してね"); });
+    tr.addEventListener("mute", () => { if (recording) showWarn("マイクがミュート状態になっています"); });
+  });
+}
+
 $("startBtn").onclick = async () => {
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
+    micStream = await navigator.mediaDevices.getUserMedia(micConstraints());
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     micSource = audioCtx.createMediaStreamSource(micStream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 4096;
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
-    micStream.getAudioTracks().forEach(tr => {
-      tr.addEventListener("ended", () => { if (recording) showWarn("マイクが切断されました。録音を止めて開始し直してね"); });
-      tr.addEventListener("mute", () => { if (recording) showWarn("マイクがミュート状態になっています"); });
-    });
+    attachMicWatch();
+    const agcEl = $("agc");
+    if (agcEl) agcEl.onchange = reconnectMic;
     $("startBtn").style.display = "none";
     $("main").style.display = "block";
     renderChips();
