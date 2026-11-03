@@ -104,10 +104,13 @@
   }
   .item .btns .del { color: var(--far); }
   .hint { font-size: 11px; color: #5b6b80; text-align: center; margin-top: 14px; line-height: 1.8; }
+  body.no-pitch #note, body.no-pitch #centsText, body.no-pitch #hz,
+  body.no-pitch .tuner-panel .meter, body.no-pitch #verdict,
+  body.no-pitch #targetDiff, body.no-pitch .graph-panel { display: none !important; }
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.8</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.9</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -163,6 +166,9 @@
         </div>
         <div class="fmt">
           <label style="gap:6px;">マイク <select id="micSel"><option value="">（自動）</option></select></label>
+        </div>
+        <div class="fmt">
+          <label style="gap:6px;"><input type="checkbox" id="showPitch" checked> 音程と音程バーを表示する</label>
         </div>
         <div class="meter-wrap">
           <div class="meter"><div class="meter-fill" id="meterFill"></div></div>
@@ -640,6 +646,7 @@ function renderList() {
         <button class="share">📤 共有</button>
         <button class="log">音程ログDL (JSON)</button>
         <button class="strip">音声だけ消す</button>
+        <button class="reup">☁↻ もう一度アップ</button>
         <button class="del">削除</button>
       </div>`
         : `<div class="chk" style="color:#7f8d9f;">🔇 音声は消しました（音程の記録だけ残っています）</div>
@@ -651,6 +658,14 @@ function renderList() {
     if (shareBtn) shareBtn.onclick = () => shareTakes([it]);
     const stripBtn = div.querySelector(".strip");
     if (stripBtn) stripBtn.onclick = () => stripAudioConfirm(it);
+    const reupBtn = div.querySelector(".reup");
+    if (reupBtn) reupBtn.onclick = async () => {
+      if (!syncReady()) { showWarn("同期の設定（トークン／☑自動）を確認してください"); return; }
+      reupBtn.textContent = "☁ アップ中…";
+      const ok = await syncUploadTake(it);
+      reupBtn.textContent = ok ? "☁↻ もう一度アップ" : "☁↻ もう一度アップ";
+      if (ok) showWarn("この録音をバックアップ先に再アップロードしました");
+    };
     div.querySelector(".log").onclick = () => {
       const blob = new Blob([JSON.stringify(it.logJson, null, 1)], { type: "application/json" });
       const a = document.createElement("a");
@@ -1654,12 +1669,19 @@ function prefsLoad() {
     const j = JSON.parse(localStorage.getItem("ui_prefs") || "{}");
     if (j.agc !== undefined && $("agc")) $("agc").checked = !!j.agc;
     if (j.mic) micDeviceId = j.mic;
+    if (j.showPitch !== undefined && $("showPitch")) $("showPitch").checked = !!j.showPitch;
+    applyPitchVis();
   } catch (e) {}
+}
+function applyPitchVis() {
+  const on = $("showPitch") ? $("showPitch").checked : true;
+  document.body.classList.toggle("no-pitch", !on);
 }
 function prefsSave() {
   try {
     localStorage.setItem("ui_prefs", JSON.stringify({
-      agc: !!($("agc") && $("agc").checked), mic: micDeviceId || ""
+      agc: !!($("agc") && $("agc").checked), mic: micDeviceId || "",
+      showPitch: !!($("showPitch") ? $("showPitch").checked : true)
     }));
   } catch (e) {}
 }
@@ -1726,6 +1748,7 @@ $("startBtn").onclick = async () => {
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
     attachMicWatch();
+    if ($("showPitch")) $("showPitch").onchange = () => { applyPitchVis(); prefsSave(); };
     const agcEl = $("agc");
     if (agcEl) agcEl.onchange = async () => { prefsSave(); await reconnectMic(); };
     prefsLoad();
