@@ -76,6 +76,10 @@
   .list-head span { font-size: 13px; font-weight: 700; color: var(--dim); }
   .list-head button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer; padding: 2px 4px; }
   .list-head button:hover { color: #cfd8e6; }
+  .head-btns { display: flex; flex-wrap: wrap; gap: 2px 16px; justify-content: flex-start; margin: 0 0 4px; }
+  .head-btns button { background: none; border: none; color: #5b6b80; font-size: 12px; cursor: pointer;
+    padding: 6px 2px; white-space: nowrap; }
+  .head-btns button:hover { color: #cfd8e6; }
   #songName, #micSel { background:#0f131a; border:1px solid #2a3342; color:#dfe7f2; border-radius:8px;
     padding:5px 8px; font-size:12px; width:140px; }
   #micSel { width:170px; }
@@ -103,7 +107,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.2</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.3</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -195,7 +199,16 @@
 
       <div class="list-panel">
         <div class="saved-note" id="savedNote">✔ 録音はこの端末のブラウザ内（IndexedDB）に自動保存されます。ページを再読み込みしても消えません。</div>
-        <div class="list-head"><span id="cnt">録音一覧 0</span><span style="flex:1"></span><button id="importBtn">📥 読み込み</button><button id="shareAll">📤 全部共有</button><button id="dlAll">全部DL</button><button id="stripOld">🧹 音声だけ消す</button><button id="clearAll">すべて削除</button></div>
+        <div class="list-head"><span id="cnt">録音一覧 0</span></div>
+        <div class="head-btns">
+          <button id="importBtn">📥 読み込み</button>
+          <button id="shareAll">📤 全部共有</button>
+          <button id="dlAll">全部DL</button>
+        </div>
+        <div class="head-btns" style="margin-bottom:8px;">
+          <button id="stripOld" style="color:#8fc9a6;">🧹 音声だけ消す</button>
+          <button id="clearAll" style="color:#ff8f8f;">すべて削除</button>
+        </div>
         <input type="file" id="importFile" multiple accept="audio/*,video/mp4,.webm,.wav,.mp4,.m4a,.opus,.ogg,.json" style="display:none">
         <div class="saved-note" style="background:#141c28;border-color:#22303f;color:#7f8d9f;">
           べつの端末とやりとりするとき：<b>📤 全部共有</b> でGoogle Drive・LINEなどに送って、べつの端末で <b>📥 読み込み</b> を押してそのファイルを選ぶと、この一覧に戻ります（自動同期ではないので、手で運ぶ形）。
