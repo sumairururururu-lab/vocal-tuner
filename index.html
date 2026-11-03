@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.4</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.5</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -120,6 +120,19 @@
         </div>
         <div class="verdict" id="verdict"></div>
         <div class="targets" id="chips"></div>
+        <div class="targets" style="margin:6px 0 0;">
+          <button class="chip" id="tDown" title="半音下げる">−1</button>
+          <button class="chip" id="tUp" title="半音上げる">＋1</button>
+          <button class="chip" id="tOctDown" title="1オクターブ下げる">−12</button>
+          <button class="chip" id="tOctUp" title="1オクターブ上げる">＋12</button>
+          <button class="chip" id="tCatch" style="color:#ffd166;">🎯 いま歌った音を目標に</button>
+        </div>
+        <div class="targets" style="margin:6px 0 0;">
+          <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;">目標音
+            <select id="tSel" style="background:#0f131a;border:1px solid #2a3342;color:#dfe7f2;border-radius:8px;padding:4px 6px;font-size:12px;"></select>
+          </label>
+          <button class="chip" id="tClear" style="color:#8b96a8;">目標なし</button>
+        </div>
         <div id="targetDiff"></div>
       </div>
 
@@ -239,22 +252,32 @@ const noteEl = $("note"), centsEl = $("centsText"), hzEl = $("hz"),
 
 // ================= targets =================
 const PRESETS = [
-  { label: "F♯4", midi: 66 }, { label: "D♯5", midi: 75 }, { label: "E5", midi: 76 },
-  { label: "F5", midi: 77 }, { label: "F♯5", midi: 78 }, { label: "G5", midi: 79 },
-  { label: "G♯5", midi: 80 },
+  { label: "A3", midi: 57 }, { label: "F4", midi: 65 }, { label: "A4", midi: 69 },
+  { label: "C5", midi: 72 }, { label: "D5", midi: 74 }, { label: "D♯5", midi: 75 },
+  { label: "E5", midi: 76 }, { label: "F5", midi: 77 }, { label: "F♯5", midi: 78 },
+  { label: "G5", midi: 79 }, { label: "G♯5", midi: 80 }, { label: "A5", midi: 81 },
+  { label: "B5", midi: 83 }, { label: "C6", midi: 84 },
 ];
 let targetMidi = null, targetLabel = null;
+const TMIN = 45, TMAX = 90;   // A2 〜 F#6
+
+function setTarget(m) {
+  if (m === null) { targetMidi = null; targetLabel = null; }
+  else {
+    m = Math.max(TMIN, Math.min(TMAX, Math.round(m)));
+    targetMidi = m; targetLabel = noteName(m);
+  }
+  const sel = $("tSel");
+  if (sel) sel.value = targetMidi === null ? "" : String(targetMidi);
+  renderChips();
+}
 function renderChips() {
   chipsEl.innerHTML = "";
   PRESETS.forEach(p => {
     const b = document.createElement("button");
     b.className = "chip" + (targetLabel === p.label ? " active" : "");
     b.textContent = p.label;
-    b.onclick = () => {
-      if (targetLabel === p.label) { targetMidi = null; targetLabel = null; }
-      else { targetMidi = p.midi; targetLabel = p.label; }
-      renderChips();
-    };
+    b.onclick = () => { if (targetMidi === p.midi) setTarget(null); else setTarget(p.midi); };
     chipsEl.appendChild(b);
   });
   const play = document.createElement("button");
@@ -262,6 +285,30 @@ function renderChips() {
   play.textContent = "🔊 目標音";
   play.onclick = () => { if (targetMidi !== null) playTone(midiFreq(targetMidi)); };
   chipsEl.appendChild(play);
+}
+
+function buildTargetSelect() {
+  const sel = $("tSel");
+  if (!sel) return;
+  let html = '<option value="">（なし）</option>';
+  for (let m = TMIN; m <= TMAX; m++) html += `<option value="${m}">${noteName(m)}</option>`;
+  sel.innerHTML = html;
+  sel.onchange = () => setTarget(sel.value === "" ? null : Number(sel.value));
+}
+
+function wireTargetTools() {
+  buildTargetSelect();
+  $("tDown").onclick = () => setTarget((targetMidi === null ? 69 : targetMidi) - 1);
+  $("tUp").onclick = () => setTarget((targetMidi === null ? 69 : targetMidi) + 1);
+  $("tOctDown").onclick = () => setTarget((targetMidi === null ? 69 : targetMidi) - 12);
+  $("tOctUp").onclick = () => setTarget((targetMidi === null ? 69 : targetMidi) + 12);
+  $("tClear").onclick = () => setTarget(null);
+  $("tCatch").onclick = () => {
+    if (lastSungMidi === null) { showWarn("まだ声を検出できていません。歌ってから押してね"); return; }
+    setTarget(Math.round(lastSungMidi));
+    $("tCatch").textContent = "🎯 目標 " + targetLabel + " にした";
+    setTimeout(() => { $("tCatch").textContent = "🎯 いま歌った音を目標に"; }, 1500);
+  };
 }
 let audioCtx = null;
 function playTone(freq, dur = 1.5) {
@@ -298,7 +345,7 @@ function encodeWAV(chunks, sampleRate) {
 // ================= recording state =================
 let mediaRec = null, recChunks = [], wavChunks = [], recStart = 0, recording = false;
 let pitchLog = [], lastLogT = 0, timerRaf = null;
-let smoothMidi = null;
+let smoothMidi = null, lastSungMidi = null;
 const items = []; // {id, blob, url, log, summary, fmt, name}
 
 // ================= 端末内保存（リロードしても消えない） =================
@@ -828,6 +875,7 @@ function pitchTick() {
         const diff = midi - smoothMidi;
         smoothMidi += (Math.abs(diff) > 6 ? Math.sign(diff) * 6 : diff * 0.35);
       }
+      lastSungMidi = smoothMidi;
       const nn = nearestNote(midiFreq(smoothMidi));
       noteEl.textContent = nn.name;
       const color = Math.abs(nn.cents) <= 15 ? "var(--ok)" : Math.abs(nn.cents) <= 40 ? "var(--near)" : "var(--far)";
@@ -976,6 +1024,7 @@ $("startBtn").onclick = async () => {
     $("startBtn").style.display = "none";
     $("main").style.display = "block";
     renderChips();
+    wireTargetTools();
     if (detectTimer) clearInterval(detectTimer);
     detectTimer = setInterval(pitchTick, 20);
     drawTick();
