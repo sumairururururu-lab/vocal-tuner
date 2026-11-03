@@ -103,7 +103,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.8</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v2.9</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -170,42 +170,19 @@
       <div class="list-panel" style="margin-bottom:12px;">
         <div class="list-head"><span>🔁 自動バックアップ／別端末同期</span><button id="ghToggle">設定を開く</button></div>
         <div id="ghBody" style="display:none;">
-          <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
-            <label>保存先
-              <select id="syncMode" style="background:#0d141c;color:#e6edf3;border:1px solid #26323f;border-radius:8px;padding:6px;">
-                <option value="gdrive">Google ドライブ（15GB）</option>
-                <option value="github">GitHub（無料）</option>
-              </select>
-            </label>
-          </div>
-          <div id="gvBox">
-            <div class="fmt" style="justify-content:flex-start;">
-              <label>URL <input id="gvUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" style="width:250px;"></label>
-            </div>
-            <div class="fmt" style="justify-content:flex-start;">
-              <label>合言葉 <input id="gvSecret" type="password" placeholder="自分で決めた合言葉" autocomplete="off" style="width:180px;"></label>
-            </div>
-          </div>
-          <div id="ghBox" style="display:none;">
-            <div class="fmt" style="justify-content:flex-start;gap:10px;flex-wrap:wrap;">
-              <label>リポジトリ <input id="ghRepo" type="text" placeholder="ユーザー名/リポジトリ" autocomplete="off" style="width:210px;"></label>
-              <label>フォルダ <input id="ghDir" type="text" placeholder="takes" autocomplete="off" style="width:90px;"></label>
-            </div>
-            <div class="fmt" style="justify-content:flex-start;">
-              <label>トークン <input id="ghToken" type="password" placeholder="ghp_...（この端末にだけ保存）" autocomplete="off" style="width:230px;"></label>
-            </div>
+          <div id="destList"></div>
+          <div class="fmt" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
+            <button class="chip" id="destAdd">＋ 保存先を追加</button>
+            <button class="chip" id="syncSave">保存</button>
+            <button class="chip" id="syncTest">接続テスト</button>
+            <button class="chip" id="syncNow" style="color:#3ddc84;">今すぐ同期</button>
+            <button class="chip" id="syncForget" style="color:#ff8f8f;">合言葉を消す</button>
           </div>
           <div class="fmt" style="justify-content:flex-start;gap:14px;flex-wrap:wrap;">
             <label><input type="checkbox" id="syncAuto"> 自動でアップロード／読み込み</label>
           </div>
-          <div class="fmt" style="justify-content:flex-start;gap:8px;flex-wrap:wrap;">
-            <button class="chip" id="syncSave">保存</button>
-            <button class="chip" id="syncTest">接続テスト</button>
-            <button class="chip" id="syncNow" style="color:#3ddc84;">今すぐ同期</button>
-            <button class="chip" id="syncForget" style="color:#ff8f8f;">設定を消す</button>
-          </div>
           <div id="ghMsg" style="font-size:11px;color:#7f8d9f;margin-top:6px;line-height:1.6;">
-            クラウドに録音をためて、ほかの端末でも同じ一覧を使えます。合言葉／トークンはこの端末のブラウザにだけ保存されます。
+            保存先は6個まで。1つがいっぱいになると、自動で次の保存先に切りかえて保存します。合言葉／トークンはこの端末にだけ保存されます。
           </div>
         </div>
       </div>
@@ -728,21 +705,38 @@ async function importFiles(fileList) {
   else $("savedNote").textContent = "📥 " + added + "本を読み込みました（この端末に保存済み）";
 }
 
-// ================= 同期（Google ドライブ / GitHub） =================
-const SYNC = { mode: "gdrive", gvUrl: "", gvSecret: "",
-               ghRepo: "sumairururururu-lab/vocal-takes", ghDir: "takes", ghToken: "", auto: false };
+// ================= 同期（複数の保存先・自動お引っ越し） =================
+const SYNC = { dests: [], active: 0, auto: false };
+const MAX_DESTS = 6;
 
 function syncLoad() {
   try {
-    const j = JSON.parse(localStorage.getItem("sync_cfg") || "{}");
-    Object.keys(SYNC).forEach(k => { if (j[k] !== undefined && j[k] !== null) SYNC[k] = j[k]; });
+    const j = JSON.parse(localStorage.getItem("sync_cfg2") || "null");
+    if (j && Array.isArray(j.dests)) {
+      SYNC.dests = j.dests;
+      SYNC.active = j.active || 0;
+      SYNC.auto = !!j.auto;
+    } else {
+      const old = JSON.parse(localStorage.getItem("sync_cfg") || "null");
+      if (old && old.mode === "gdrive" && old.gvUrl) {
+        SYNC.dests = [{ kind: "gdrive", name: "Google ドライブ", url: old.gvUrl, secret: old.gvSecret }];
+        SYNC.auto = !!old.auto;
+      } else if (old && old.mode === "github" && old.ghToken) {
+        SYNC.dests = [{ kind: "github", name: "GitHub", repo: old.ghRepo, dir: old.ghDir, token: old.ghToken }];
+        SYNC.auto = !!old.auto;
+      }
+    }
   } catch (e) {}
+  if (!SYNC.dests.length) SYNC.dests = [{ kind: "gdrive", name: "Google ドライブ", url: "", secret: "" }];
+  if (SYNC.active >= SYNC.dests.length) SYNC.active = 0;
 }
-function syncSaveCfg() { try { localStorage.setItem("sync_cfg", JSON.stringify(SYNC)); } catch (e) {} }
-function syncReady() {
-  if (!SYNC.auto) return false;
-  return SYNC.mode === "gdrive" ? !!(SYNC.gvUrl && SYNC.gvSecret) : !!(SYNC.ghToken && SYNC.ghRepo);
+function syncSaveCfg() {
+  try { localStorage.setItem("sync_cfg2", JSON.stringify({ dests: SYNC.dests, active: SYNC.active, auto: SYNC.auto })); } catch (e) {}
 }
+function destReady(d) {
+  return d.kind === "gdrive" ? !!(d.url && d.secret) : !!(d.token && d.repo);
+}
+function syncReady() { return SYNC.auto && SYNC.dests.some(destReady); }
 function syncMsg(t, col) {
   const el = $("ghMsg");
   if (!el) return;
@@ -762,12 +756,14 @@ function b64ToBlob(b64, mime) {
   for (let i = 0; i < len; i++) u8[i] = bin.charCodeAt(i);
   return new Blob([u8], { type: mime || "application/octet-stream" });
 }
+function mb(n) { return (n / 1048576).toFixed(1) + "MB"; }
+function gb(n) { return (n / 1073741824).toFixed(2) + "GB"; }
 
-/* --- Google ドライブ（Apps Script 経由） --- */
-async function gvReq(payload) {
-  if (!SYNC.gvUrl) throw new Error("URLが未設定");
-  const body = JSON.stringify(Object.assign({ secret: SYNC.gvSecret }, payload));
-  const r = await fetch(SYNC.gvUrl, { method: "POST", redirect: "follow",
+/* --- Google ドライブ（Apps Script） --- */
+async function gvReq(d, payload) {
+  if (!d.url) throw new Error("URLが未設定");
+  const body = JSON.stringify(Object.assign({ secret: d.secret }, payload));
+  const r = await fetch(d.url, { method: "POST", redirect: "follow",
     headers: { "Content-Type": "text/plain;charset=utf-8" }, body: body });
   const t = await r.text();
   let j;
@@ -777,70 +773,88 @@ async function gvReq(payload) {
 }
 
 /* --- GitHub --- */
-async function ghReq(path, opts) {
+async function ghReq(d, path, opts) {
   opts = opts || {};
   const r = await fetch("https://api.github.com" + path, {
     method: opts.method || "GET",
-    headers: Object.assign({ Authorization: "Bearer " + SYNC.ghToken, Accept: "application/vnd.github+json",
+    headers: Object.assign({ Authorization: "Bearer " + d.token, Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28" }, opts.headers || {}),
     body: opts.body
   });
   if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 100));
   return r.status === 204 ? {} : r.json();
 }
-async function ghPut(name, blob) {
-  const path = SYNC.ghDir + "/" + encodeURIComponent(name);
+
+/* --- 保存先ごとの基本操作 --- */
+async function txUpload(d, name, blob) {
+  if (d.kind === "gdrive") {
+    await gvReq(d, { action: "upload", name: name, mime: blob.type || "application/octet-stream", b64: await blobToB64(blob) });
+    return;
+  }
+  const path = (d.dir || "takes") + "/" + encodeURIComponent(name);
   const content = await blobToB64(blob);
-  let sha = null;
-  try { const cur = await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + path); sha = cur.sha; } catch (e) {}
+  let sha = null, cur = null;
+  try { cur = await ghReq(d, "/repos/" + d.repo + "/contents/" + path); sha = cur.sha; } catch (e) {}
   const body = { message: "add " + name, content: content, branch: "main" };
   if (sha) body.sha = sha;
-  await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + path, { method: "PUT", body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" } });
+  await ghReq(d, "/repos/" + d.repo + "/contents/" + path, { method: "PUT",
+    body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
 }
-
-/* --- 共通トランスポート --- */
-async function txUpload(name, blob) {
-  if (SYNC.mode === "gdrive") {
-    await gvReq({ action: "upload", name: name, mime: blob.type || "application/octet-stream", b64: await blobToB64(blob) });
-  } else {
-    await ghPut(name, blob);
+async function txList(d) {
+  if (d.kind === "gdrive") {
+    const j = await gvReq(d, { action: "list" });
+    return (j.files || []).map(f => ({ name: f.name, key: f.id }));
   }
+  const arr = await ghReq(d, "/repos/" + d.repo + "/contents/" + (d.dir || "takes"));
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(f => f.type === "file").map(f => ({ name: f.name, key: f.download_url }));
 }
-async function txList() {
-  if (SYNC.mode === "gdrive") {
-    const j = await gvReq({ action: "list" });
-    return (j.files || []).map(f => ({ name: f.name, key: f.id, size: f.size }));
-  }
-  const arr = await ghReq("/repos/" + SYNC.ghRepo + "/contents/" + SYNC.ghDir);
-  if (!Array.isArray(arr)) throw new Error("フォルダがまだありません");
-  return arr.filter(f => f.type === "file").map(f => ({ name: f.name, key: f.download_url, size: f.size }));
-}
-async function txGet(item) {
-  if (SYNC.mode === "gdrive") {
-    const j = await gvReq({ action: "get", id: item.key });
+async function txGet(d, item) {
+  if (d.kind === "gdrive") {
+    const j = await gvReq(d, { action: "get", id: item.key });
     return b64ToBlob(j.b64, j.mime);
   }
   const r = await fetch(item.key);
   if (!r.ok) throw new Error("取得失敗 " + r.status);
   return r.blob();
 }
-async function txPing() {
-  if (SYNC.mode === "gdrive") {
-    const j = await gvReq({ action: "ping" });
-    return "ドライブ接続OK（フォルダ: " + (j.folder || "vocal-takes") + "）";
+async function txQuota(d) {
+  if (d.kind === "gdrive") {
+    const j = await gvReq(d, { action: "quota" });
+    return { limit: j.limit, used: j.used, free: (j.limit && j.used != null) ? (j.limit - j.used) : null };
   }
-  const j = await ghReq("/repos/" + SYNC.ghRepo);
-  return "GitHub接続OK：" + j.full_name + "（" + (j.private ? "非公開" : "⚠公開") + "）";
+  return { limit: null, used: null, free: null };
 }
 
-/* --- アップロード／読み込み --- */
+/* 空きが少ない保存先は飛ばして、次の保存先を使う */
+const MIN_FREE = 300 * 1048576;
+async function pickDest() {
+  const n = SYNC.dests.length;
+  for (let k = 0; k < n; k++) {
+    const i = (SYNC.active + k) % n;
+    const d = SYNC.dests[i];
+    if (!destReady(d)) continue;
+    if (d.kind === "gdrive") {
+      try {
+        const q = await txQuota(d);
+        if (q.free !== null && q.free < MIN_FREE) { syncMsg("「" + d.name + "」は残りが少ないので次の保存先へ", "#d7a13b"); continue; }
+      } catch (e) { continue; }
+    }
+    if (i !== SYNC.active) { SYNC.active = i; syncSaveCfg(); renderDests(); }
+    return d;
+  }
+  return null;
+}
+
+/* --- アップロード --- */
 async function syncUploadTake(rec) {
   if (!syncReady()) return false;
+  const d = await pickDest();
+  if (!d) { showWarn("保存先がいっぱいです（設定で保存先を追加してください）"); return false; }
   try {
-    await txUpload(rec.name, rec.blob);
+    await txUpload(d, rec.name, rec.blob);
     if (rec.logJson && rec.logJson.frames && rec.logJson.frames.length) {
-      await txUpload(rec.base + "_pitchlog.json", new Blob([JSON.stringify(rec.logJson)], { type: "application/json" }));
+      await txUpload(d, rec.base + "_pitchlog.json", new Blob([JSON.stringify(rec.logJson)], { type: "application/json" }));
     }
     rec.uploaded = true;
     renderList();
@@ -850,56 +864,110 @@ async function syncUploadTake(rec) {
     return false;
   }
 }
+
+/* --- 読み込み（すべての保存先をまとめて） --- */
 async function syncPull() {
-  let list;
-  try { list = await txList(); } catch (e) { return -1; }
   const local = new Set(items.map(it => it.name));
-  const logs = new Map();
-  list.forEach(f => { if (/_pitchlog\.json$/i.test(f.name)) logs.set(f.name.replace(/_pitchlog\.json$/i, ""), f); });
-  let added = 0;
-  for (const f of list) {
-    if (/_pitchlog\.json$/i.test(f.name)) continue;
-    if (local.has(f.name)) continue;
-    try {
-      const blob = await txGet(f);
-      const base = f.name.replace(/\.[^.]+$/, "");
-      let logJson = null;
-      if (logs.has(base)) {
-        try { logJson = JSON.parse(await (await txGet(logs.get(base))).text()); } catch (e) {}
-      }
-      const summary = logJson && logJson.frames ? buildSummary(logJson.frames) : {};
-      const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: blob, url: URL.createObjectURL(blob),
-        log: [], summary: summary, fmt: "sync", name: f.name, base: base,
-        logJson: logJson || { version: 2, frames: [] }, check: null, partial: false, uploaded: true };
-      items.push(rec); renderList(); added++;
-      await dbPut(rec);
-      checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
-    } catch (e) {}
+  let added = 0, tried = 0;
+  for (const d of SYNC.dests) {
+    if (!destReady(d)) continue;
+    let list;
+    try { list = await txList(d); } catch (e) { continue; }
+    tried++;
+    const logs = new Map();
+    list.forEach(f => { if (/_pitchlog\.json$/i.test(f.name)) logs.set(f.name.replace(/_pitchlog\.json$/i, ""), f); });
+    for (const f of list) {
+      if (/_pitchlog\.json$/i.test(f.name)) continue;
+      if (local.has(f.name)) continue;
+      try {
+        const blob = await txGet(d, f);
+        const base = f.name.replace(/\.[^.]+$/, "");
+        let logJson = null;
+        if (logs.has(base)) {
+          try { logJson = JSON.parse(await (await txGet(d, logs.get(base))).text()); } catch (e) {}
+        }
+        const summary = logJson && logJson.frames ? buildSummary(logJson.frames) : {};
+        const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: blob, url: URL.createObjectURL(blob),
+          log: [], summary: summary, fmt: "sync", name: f.name, base: base,
+          logJson: logJson || { version: 2, frames: [] }, check: null, partial: false, uploaded: true };
+        items.push(rec); local.add(f.name); renderList(); added++;
+        await dbPut(rec);
+        checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
+      } catch (e) {}
+    }
   }
-  return added;
+  return tried ? added : -1;
 }
 
+/* --- UI --- */
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function renderDests() {
+  const box = $("destList");
+  if (!box) return;
+  box.innerHTML = "";
+  SYNC.dests.forEach((d, i) => {
+    const card = document.createElement("div");
+    card.style.cssText = "border:1px solid #22303f;border-radius:10px;padding:8px;margin-bottom:8px;background:#101822;";
+    const used = i === SYNC.active;
+    let inner = '<div style="font-size:12px;margin-bottom:6px;color:' + (used ? "#3ddc84" : "#9fb0c3") + ';">' +
+      (i + 1) + "．" + (d.kind === "gdrive" ? "Google ドライブ" : "GitHub") + (used ? "（使用中）" : "") + "</div>";
+    if (d.kind === "gdrive") {
+      inner += '<div class="fmt" style="justify-content:flex-start;"><label>URL <input data-i="' + i + '" data-k="url" type="text" value="' + esc(d.url) + '" placeholder="https://script.google.com/macros/s/.../exec" style="width:200px;"></label></div>' +
+               '<div class="fmt" style="justify-content:flex-start;"><label>合言葉 <input data-i="' + i + '" data-k="secret" type="password" value="' + esc(d.secret) + '" style="width:140px;"></label>' +
+               '<span class="q" data-q="' + i + '" style="font-size:11px;color:#7f8d9f;margin-left:8px;">残り: ?</span></div>';
+    } else {
+      inner += '<div class="fmt" style="justify-content:flex-start;"><label>リポジトリ <input data-i="' + i + '" data-k="repo" type="text" value="' + esc(d.repo) + '" style="width:190px;"></label>' +
+               '<label>フォルダ <input data-i="' + i + '" data-k="dir" type="text" value="' + esc(d.dir || "takes") + '" style="width:80px;"></label></div>' +
+               '<div class="fmt" style="justify-content:flex-start;"><label>トークン <input data-i="' + i + '" data-k="token" type="password" value="' + esc(d.token) + '" style="width:200px;"></label></div>';
+    }
+    inner += '<div class="fmt" style="justify-content:flex-start;gap:6px;">' +
+      '<button class="chip" data-act="use" data-i="' + i + '">使用中にする</button>' +
+      '<button class="chip" data-act="quota" data-i="' + i + '">残りを見る</button>' +
+      (SYNC.dests.length > 1 ? '<button class="chip" data-act="del" data-i="' + i + '" style="color:#ff8f8f;">削除</button>' : "") +
+      "</div>";
+    card.innerHTML = inner;
+    box.appendChild(card);
+  });
+  box.querySelectorAll("input[data-k]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const i = +inp.dataset.i, k = inp.dataset.k;
+      SYNC.dests[i][k] = inp.value.trim();
+      syncSaveCfg();
+    });
+  });
+  box.querySelectorAll("button[data-act]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const i = +btn.dataset.i, act = btn.dataset.act, d = SYNC.dests[i];
+      if (act === "use") { SYNC.active = i; syncSaveCfg(); renderDests(); syncMsg("使用中の保存先を「" + d.name + "」にしました", "#3ddc84"); }
+      if (act === "del") { SYNC.dests.splice(i, 1); if (SYNC.active >= SYNC.dests.length) SYNC.active = 0; syncSaveCfg(); renderDests(); }
+      if (act === "quota") {
+        const el = box.querySelector('[data-q="' + i + '"]');
+        if (el) el.textContent = "残り: 確認中…";
+        try {
+          const q = await txQuota(d);
+          if (el) el.textContent = q.free === null ? "残り: 不明（GitHub）" : "残り: " + gb(q.free) + "（全体 " + gb(q.limit) + "）";
+        } catch (e) { if (el) el.textContent = "残り: 取得できません"; }
+      }
+    });
+  });
+}
 function syncRenderFields() {
-  const modesel = $("syncMode");
-  if (!modesel) return;
-  modesel.value = SYNC.mode;
-  $("gvUrl").value = SYNC.gvUrl; $("gvSecret").value = SYNC.gvSecret;
-  $("ghRepo").value = SYNC.ghRepo; $("ghDir").value = SYNC.ghDir; $("ghToken").value = SYNC.ghToken;
+  if (!$("destList")) return;
+  renderDests();
   $("syncAuto").checked = SYNC.auto;
-  $("gvBox").style.display = SYNC.mode === "gdrive" ? "block" : "none";
-  $("ghBox").style.display = SYNC.mode === "github" ? "block" : "none";
 }
 function syncReadFields() {
-  SYNC.mode = $("syncMode").value;
-  SYNC.gvUrl = $("gvUrl").value.trim();
-  SYNC.gvSecret = $("gvSecret").value.trim();
-  SYNC.ghRepo = $("ghRepo").value.trim() || SYNC.ghRepo;
-  SYNC.ghDir = ($("ghDir").value.trim() || "takes").replace(/^\/+|\/+$/g, "");
-  SYNC.ghToken = $("ghToken").value.trim();
   SYNC.auto = $("syncAuto").checked;
   syncSaveCfg();
 }
-$("syncMode").onchange = () => { syncReadFields(); syncRenderFields(); };
+
+$("destAdd").onclick = () => {
+  if (SYNC.dests.length >= MAX_DESTS) { syncMsg("保存先は" + MAX_DESTS + "個までです", "#d7a13b"); return; }
+  SYNC.dests.push({ kind: "gdrive", name: "Google ドライブ " + (SYNC.dests.length + 1), url: "", secret: "" });
+  syncSaveCfg(); renderDests(); syncMsg("保存先を追加しました（URLと合言葉を入れてください）", "#3ddc84");
+};
 $("ghToggle").onclick = () => {
   const body = $("ghBody");
   const open = body.style.display === "none";
@@ -908,15 +976,27 @@ $("ghToggle").onclick = () => {
   if (open) syncRenderFields();
 };
 $("syncSave").onclick = () => {
-  syncReadFields(); syncRenderFields();
-  syncMsg("保存しました（保存先: " + (SYNC.mode === "gdrive" ? "Google ドライブ" : "GitHub") +
-    " / 自動: " + (SYNC.auto ? "ON" : "OFF") + "）", "#3ddc84");
+  syncReadFields(); renderDests();
+  syncMsg("保存しました（保存先 " + SYNC.dests.filter(destReady).length + "個 / 自動: " + (SYNC.auto ? "ON" : "OFF") + "）", "#3ddc84");
 };
 $("syncTest").onclick = async () => {
   syncReadFields();
   syncMsg("確認中…");
-  try { syncMsg(await txPing(), "#3ddc84"); }
-  catch (e) { syncMsg("接続できません：" + e.message, "#e06c6c"); }
+  const lines = [];
+  for (let i = 0; i < SYNC.dests.length; i++) {
+    const d = SYNC.dests[i];
+    if (!destReady(d)) continue;
+    try {
+      if (d.kind === "gdrive") {
+        const q = await txQuota(d);
+        lines.push((i + 1) + "．OK 残り" + (q.free === null ? "?" : gb(q.free)));
+      } else {
+        const j = await ghReq(d, "/repos/" + d.repo);
+        lines.push((i + 1) + "．OK " + j.full_name + (j.private ? "（非公開）" : "（⚠公開）"));
+      }
+    } catch (e) { lines.push((i + 1) + "．× " + e.message.slice(0, 40)); }
+  }
+  syncMsg(lines.length ? lines.join(" ／ ") : "URLと合言葉を入れてください", lines.some(l => l.indexOf("×") > 0) ? "#d7a13b" : "#3ddc84");
 };
 $("syncNow").onclick = async () => {
   syncReadFields();
@@ -928,9 +1008,9 @@ $("syncNow").onclick = async () => {
   syncMsg("完了：アップロード " + up + "本／読み込み " + down + "本", "#3ddc84");
 };
 $("syncForget").onclick = () => {
-  SYNC.gvSecret = ""; SYNC.ghToken = ""; SYNC.auto = false;
-  $("gvSecret").value = ""; $("ghToken").value = ""; $("syncAuto").checked = false;
-  syncSaveCfg();
+  SYNC.dests.forEach(d => { d.secret = ""; d.token = ""; });
+  SYNC.auto = false;
+  syncSaveCfg(); renderDests(); $("syncAuto").checked = false;
   syncMsg("この端末から合言葉・トークンを消しました", "#d7a13b");
 };
 
