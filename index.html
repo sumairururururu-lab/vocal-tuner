@@ -107,7 +107,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.5</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v3.6</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -1306,6 +1306,8 @@ $("dlAll").onclick = async () => {
   }
 };
 
+prefsLoad();
+
 // 再読み込み・タブを閉じたときに、保存済みの録音を復元
 (async function restoreSaved() {
   const recs = await dbGetAll();
@@ -1626,6 +1628,21 @@ async function diagnose() {
 }
 
 let micDeviceId = "";
+// 画面の設定を覚えておく（リロードしても戻らない）
+function prefsLoad() {
+  try {
+    const j = JSON.parse(localStorage.getItem("ui_prefs") || "{}");
+    if (j.agc !== undefined && $("agc")) $("agc").checked = !!j.agc;
+    if (j.mic) micDeviceId = j.mic;
+  } catch (e) {}
+}
+function prefsSave() {
+  try {
+    localStorage.setItem("ui_prefs", JSON.stringify({
+      agc: !!($("agc") && $("agc").checked), mic: micDeviceId || ""
+    }));
+  } catch (e) {}
+}
 function micConstraints() {
   const agc = $("agc") && $("agc").checked;
   const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: !!agc };
@@ -1676,7 +1693,12 @@ function attachMicWatch() {
 
 $("startBtn").onclick = async () => {
   try {
-    micStream = await navigator.mediaDevices.getUserMedia(micConstraints());
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia(micConstraints());
+    } catch (e) {
+      micDeviceId = ""; prefsSave();   // 前のマイクが見つからないときは自動に戻す
+      micStream = await navigator.mediaDevices.getUserMedia(micConstraints());
+    }
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     micSource = audioCtx.createMediaStreamSource(micStream);
     analyser = audioCtx.createAnalyser();
@@ -1685,10 +1707,12 @@ $("startBtn").onclick = async () => {
     anBuf = new Float32Array(analyser.fftSize);
     attachMicWatch();
     const agcEl = $("agc");
-    if (agcEl) agcEl.onchange = reconnectMic;
+    if (agcEl) agcEl.onchange = async () => { prefsSave(); await reconnectMic(); };
+    prefsLoad();
+    if ($("agc")) $("savedNote").textContent = "🎚 この端末の設定：" + ($("agc").checked ? "自動ゲイン ON" : "自動ゲイン OFF") + "（リロードしても残ります）";
     const micSel = $("micSel");
     if (micSel) {
-      micSel.onchange = async () => { micDeviceId = micSel.value; await reconnectMic(); };
+      micSel.onchange = async () => { micDeviceId = micSel.value; prefsSave(); await reconnectMic(); };
       await listMics();
     }
     if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
