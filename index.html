@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.6</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.7</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -167,6 +167,10 @@
         </div>
         <div class="fmt">
           <label style="gap:6px;">マイク <select id="micSel"><option value="">（自動）</option></select></label>
+        </div>
+        <div class="fmt">
+          <label style="gap:6px;" title="周囲の音より小さい音は無視します（家族の声・雑音対策）">
+            <input type="checkbox" id="noiseGate" checked> 小さい音を無視（家族の声・雑音対策）</label>
         </div>
         <div class="fmt" style="gap:14px;flex-wrap:wrap;">
           <label style="gap:6px;"><input type="checkbox" id="showPitch" checked> 音程</label>
@@ -507,6 +511,22 @@ async function requestWakeLock() {
 }
 function releaseWakeLock() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
 
+// ===== 小さい音を無視する（家族の声・雑音対策） =====
+let noiseFloor = 0.0025;
+function rmsOf(buf) {
+  let e = 0;
+  for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+  return Math.sqrt(e / buf.length);
+}
+function gateOn() { return !($("noiseGate") && $("noiseGate").checked === false); }
+function updateNoiseFloor(rms) {
+  if (!isFinite(rms) || rms <= 0) return;
+  if (rms < noiseFloor * 1.6) noiseFloor = noiseFloor * 0.96 + rms * 0.04;
+  else noiseFloor = noiseFloor * 0.9995 + Math.min(rms, noiseFloor * 1.2) * 0.0005;
+  noiseFloor = Math.max(0.0008, Math.min(noiseFloor, 0.05));
+}
+function gateLevel() { return Math.max(0.006, noiseFloor * 2.5); }
+
 // 音程ログはタイマーで取る（rAFは画面OFF/裏で止まり、ログに穴が空くため）
 function startPitchLogger() {
   stopPitchLogger();
@@ -514,7 +534,9 @@ function startPitchLogger() {
   logTimer = setInterval(() => {
     if (!recording || !analyser || !audioCtx) return;
     analyser.getFloatTimeDomainData(logBuf);
-    const det = detectPitch(logBuf, audioCtx.sampleRate);
+    const rmsLog = rmsOf(logBuf);
+    updateNoiseFloor(rmsLog);
+    const det = (gateOn() && rmsLog < gateLevel()) ? null : detectPitch(logBuf, audioCtx.sampleRate);
     const t = (performance.now() - recStart) / 1000;
     if (det) {
       const m = midiOf(det.f0);
@@ -1659,9 +1681,12 @@ function dbgUpdate(det, rms) {
   const bright = (det && lastHiRel !== 0) ? ` ・ 高域 ${lastHiRel.toFixed(0)}dB` : "";
   let note2 = "";
   if (det && lastHiRel !== 0 && lastHiRel < -38) note2 = " ・ こもってる（マイクの向き/距離/別のマイクを試して）";
+  const gateDb = Math.round(20 * Math.log10(Math.max(gateLevel(), 1e-6)));
   dbgEl.textContent = det
     ? `入力 ${lv} ・ 検出 ${det.f0.toFixed(0)}Hz ・ 確度 ${det.clarity.toFixed(2)}` + bright + note2
-    : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づく／下の「自動で大きく」をON）" : "");
+    : (dB < gateDb
+        ? `入力 ${lv} ・ 小さい音なので無視中（しきい値 ${gateDb}dB）`
+        : `入力 ${lv} ・ 声を検出できていません` + (dB < -42 ? "（マイクに近づく／「自動で大きく」をON）" : ""));
   dbgEl.style.color = det ? "#4f9d6b" : "#d7a13b";
 }
 
@@ -1680,7 +1705,9 @@ function pitchTick() {
     } else {
       normBuf.fill(0);
     }
-    const det = detectPitch(normBuf, audioCtx.sampleRate);
+    updateNoiseFloor(rmsIn);
+    const gated = gateOn() && rmsIn < gateLevel();
+    const det = gated ? null : detectPitch(normBuf, audioCtx.sampleRate);
     const now = performance.now();
     const tSec = recording ? (now - recStart) / 1000 : 0;
 
@@ -1782,6 +1809,7 @@ function prefsLoad() {
     const j = JSON.parse(localStorage.getItem("ui_prefs") || "{}");
     if (j.agc !== undefined && $("agc")) $("agc").checked = !!j.agc;
     if (j.mic) micDeviceId = j.mic;
+    if (j.noiseGate !== undefined && $("noiseGate")) $("noiseGate").checked = !!j.noiseGate;
     if (j.showPitch !== undefined && $("showPitch")) $("showPitch").checked = !!j.showPitch;
     if (j.showGraph !== undefined && $("showGraph")) $("showGraph").checked = !!j.showGraph;
     else if ($("showGraph") && $("showPitch")) $("showGraph").checked = $("showPitch").checked;
@@ -1801,6 +1829,7 @@ function prefsSave() {
   try {
     localStorage.setItem("ui_prefs", JSON.stringify({
       agc: !!($("agc") && $("agc").checked), mic: micDeviceId || "",
+      noiseGate: !!($("noiseGate") ? $("noiseGate").checked : true),
       showPitch: !!($("showPitch") ? $("showPitch").checked : true),
       showGraph: !!($("showGraph") ? $("showGraph").checked : true),
       showTargets: !!($("showTargets") ? $("showTargets").checked : true)
@@ -1870,7 +1899,7 @@ $("startBtn").onclick = async () => {
     micSource.connect(analyser);
     anBuf = new Float32Array(analyser.fftSize);
     attachMicWatch();
-    ["showPitch", "showGraph", "showTargets"].forEach(id => {
+    ["noiseGate", "showPitch", "showGraph", "showTargets"].forEach(id => {
       const el = $(id);
       if (el) el.onchange = () => { applyPitchVis(); prefsSave(); };
     });
