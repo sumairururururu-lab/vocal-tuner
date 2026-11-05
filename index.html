@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.4</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.5</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -599,23 +599,30 @@ function stamp() {
 }
 
 function buildSummary(log) {
-  // 無音フレーム（midi=null）を必ず除外する。混ざると C-1 など誤表示になる
-  const voicedFrames = log.filter(e => e[1] !== null && isFinite(e[1]));
+  // 小さいノイズを拾わないように：確信度(clarity)が低いフレームは捨てる
+  const CLARITY_MIN = 0.55;
+  let voicedFrames = log.filter(e => e[1] !== null && isFinite(e[1]) && (e[3] || 0) >= CLARITY_MIN);
+  if (!voicedFrames.length) voicedFrames = log.filter(e => e[1] !== null && isFinite(e[1]));  // 静かなテイク用の保険
   const spanSec = log.length > 1 ? (log[log.length - 1][0] - log[0][0]) : 0;
   if (!voicedFrames.length) return { center: "–", max: "–", min: "–", voiced: 0, inTunePct: 0, span: +spanSec.toFixed(1) };
   const midis = voicedFrames.map(e => e[1]);
-  const sorted = [...midis].sort((a, b) => a - b);
-  const q = p => sorted[Math.floor(p * (sorted.length - 1))];
+  const sortedAll = [...midis].sort((a, b) => a - b);
+  const med = sortedAll[Math.floor(0.5 * (sortedAll.length - 1))];
+  // オクターブの誤検出を中央値に寄せる（C#2 のような外れ値を消す）
+  const corr = midis.map(m => m - 12 * Math.round((m - med) / 12));
+  const sorted = corr.map(m => Math.round(m)).sort((a, b) => a - b);
+  const q = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
   const inTune = voicedFrames.filter(e => Math.abs(e[2]) <= 15).length;
   return {
-    center: noteName(Math.round(q(0.5))),
-    max: noteName(Math.round(Math.max(...midis))),
-    min: noteName(Math.round(Math.min(...midis))),
+    center: noteName(q(0.5)),
+    max: noteName(q(0.95)),      // 上位5%を外れ値として捨てる
+    min: noteName(q(0.05)),      // 下位5%も捨てる
     voiced: (voicedFrames.length * 0.1).toFixed(1),
     inTunePct: Math.round(100 * inTune / voicedFrames.length),
     span: +spanSec.toFixed(1),
   };
 }
+
 
 function dedupeItems() {
   const seen = new Map();
@@ -1442,9 +1449,13 @@ window.addEventListener("pageshow", autoPullOnReturn);             // 戻る操�
   for (const r of recs) {
     if (!r.blob && !r.audioRemoved) continue;
     if (r.name) usedNames.add(r.name);
+    let summ = r.summary || {};
+    if (r.logJson && r.logJson.frames && r.logJson.frames.length) {
+      try { summ = buildSummary(r.logJson.frames); } catch (e) {}   // 古いテイクの最高/最低を作り直す
+    }
     items.push({ id: r.id, blob: r.blob || null, url: r.blob ? URL.createObjectURL(r.blob) : null, log: [],
       audioRemoved: !!r.audioRemoved, uploaded: !!r.uploaded, mic: r.mic || null, agc: (r.agc === undefined ? null : !!r.agc),
-      summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
+      summary: summ, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
       check: r.check || null, partial: !!r.partial });
   }
   renderList();
