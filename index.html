@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.5</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.6</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -772,6 +772,7 @@ async function importFiles(fileList) {
       summary, fmt: "import", name: uniqueName(base, (f.name.split(".").pop() || "webm")), base,
       logJson: logJson || { version: 2, imported: true, frames: [] }, check: null, partial: false };
     items.push(rec);
+    if ($("songName")) $("songName").value = "";   // 録れたら曲名は空に戻す
     renderList();
     added++;
     const ok = await dbPut(rec);
