@@ -111,7 +111,7 @@
 </style>
 </head>
 <body>
-  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.3</span></h1>
+  <h1>🎤 ボーカル・レコーダー &amp; チューナー <span style="font-size:11px;color:#5b6b80;font-weight:400;">v4.4</span></h1>
   <div class="wrap">
     <button class="start-btn" id="startBtn">🎤 マイクをつないで開始</button>
     <div id="err"></div>
@@ -429,6 +429,7 @@ async function dbPut(rec) {
       tx.objectStore(DB_STORE).put({ id: rec.id, name: rec.name, base: rec.base, fmt: rec.fmt,
         blob: rec.blob || null, summary: rec.summary, logJson: rec.logJson, check: rec.check || null,
         partial: !!rec.partial, audioRemoved: !!rec.audioRemoved, uploaded: !!rec.uploaded,
+        mic: rec.mic || null, agc: (rec.agc === undefined ? null : !!rec.agc),
         savedAt: Date.now() });
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
@@ -661,6 +662,9 @@ function renderList() {
     div.innerHTML = `
       <div class="title"><span>${it.name}${(it.partial || (c && c.partial)) ? '<span class="badge">途中</span>' : ''}</span></div>
       <div class="sum">${sumTxt}${it.uploaded ? ' <span style="color:#4f9d6b;">☁同期済</span>' : ''}${it.audioRemoved ? ' <span style="color:#7f8d9f;">🔇音声なし</span>' : ''}</div>
+      ${(it.mic || it.agc !== undefined && it.agc !== null)
+        ? `<div class="chk" style="color:#6f7f93;font-size:11px;">🎙 ${it.mic ? it.mic : "マイク不明"} ・ AGC ${it.agc ? "ON" : "OFF"}</div>`
+        : ""}
       ${chkTxt}
       ${it.blob
         ? `<audio controls preload="none" src="${it.url}"></audio>
@@ -1045,7 +1049,8 @@ async function syncPull() {
         const summary = logJson && logJson.frames ? buildSummary(logJson.frames) : {};
         const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: blob, url: URL.createObjectURL(blob),
           log: [], summary: summary, fmt: "sync", name: f.name, base: base,
-          logJson: logJson || { version: 2, frames: [] }, check: null, partial: false, uploaded: true };
+          logJson: logJson || { version: 2, frames: [] }, check: null, partial: false, uploaded: true,
+          mic: (logJson && logJson.mic) || null, agc: (logJson && logJson.mic_agc !== undefined) ? !!logJson.mic_agc : null };
         items.push(rec); local.add(f.name); renderList(); added++;
         await dbPut(rec);
         checkTake(blob).then(chk => { rec.check = chk; renderList(); dbPut(rec); });
@@ -1070,7 +1075,8 @@ async function syncPull() {
         const summary = buildSummary(logJson.frames || []);
         const rec = { id: Date.now() + Math.floor(Math.random() * 999), blob: null, url: null,
           log: [], summary: summary, fmt: "sync", name: base + "（音声なし）", base: base,
-          logJson: logJson, check: null, partial: false, uploaded: true, audioRemoved: true };
+          logJson: logJson, check: null, partial: false, uploaded: true, audioRemoved: true,
+          mic: (logJson && logJson.mic) || null, agc: (logJson && logJson.mic_agc !== undefined) ? !!logJson.mic_agc : null };
         items.push(rec); renderList(); added++;
         await dbPut(rec);
       } catch (e) {}
@@ -1437,7 +1443,7 @@ window.addEventListener("pageshow", autoPullOnReturn);             // 戻る操�
     if (!r.blob && !r.audioRemoved) continue;
     if (r.name) usedNames.add(r.name);
     items.push({ id: r.id, blob: r.blob || null, url: r.blob ? URL.createObjectURL(r.blob) : null, log: [],
-      audioRemoved: !!r.audioRemoved, uploaded: !!r.uploaded,
+      audioRemoved: !!r.audioRemoved, uploaded: !!r.uploaded, mic: r.mic || null, agc: (r.agc === undefined ? null : !!r.agc),
       summary: r.summary || {}, fmt: r.fmt, name: r.name, base: r.base, logJson: r.logJson,
       check: r.check || null, partial: !!r.partial });
   }
@@ -1518,13 +1524,15 @@ function stopRecording() {
       recorded_at: new Date().toISOString(),
       song: song || null,
       mic_agc: !!($("agc") && $("agc").checked),
+      mic: micLabel(),
       duration_s: +dur.toFixed(2),
       sample_rate: audioCtx.sampleRate,
       note: "frames: [t_sec, midi, cents, clarity] — midi null = 音声なし",
       summary,
       frames: pitchLog.map(e => [+e[0].toFixed(2), e[1] === null ? null : +e[1].toFixed(3), e[1] === null ? null : +e[2], +(e[3] || 0).toFixed(2)]),
     };
-    const rec = { id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: uniqueName(base, ext), base, logJson, check: null, partial: false };
+    const rec = { id: Date.now(), blob, url, log: pitchLog, summary, fmt, name: uniqueName(base, ext), base, logJson,
+      check: null, partial: false, mic: logJson.mic, agc: logJson.mic_agc };
     items.push(rec);
     renderList();
     if (partialId) { dbDel(partialId); partialId = null; }   // 途中データは完成版に置き換え
@@ -1749,6 +1757,13 @@ async function diagnose() {
 }
 
 let micDeviceId = "";
+function micLabel() {
+  const sel = $("micSel");
+  if (sel && sel.selectedIndex > 0 && sel.selectedOptions && sel.selectedOptions[0]) {
+    return (sel.selectedOptions[0].textContent || "").trim() || ("マイク" + sel.selectedIndex);
+  }
+  return "自動";
+}
 // 画面の設定を覚えておく（リロードしても戻らない）
 function prefsLoad() {
   try {
